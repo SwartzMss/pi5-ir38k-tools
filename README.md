@@ -5,7 +5,10 @@
 ## 准备工作
 
 1. 安装 `lgpio`：`sudo apt install python3-lgpio`
-2. 将红外发射管连接到 GPIO18，红外接收头连接到 GPIO23，具体接线可参考 `device1.jpg` 和 `device2.jpg`。
+2. 将红外发射管连接到 GPIO18，红外接收头连接到 GPIO23，具体接线可参考下图。
+
+<img src="doc/device1.jpg" alt="Device 1" width="300" />
+<img src="doc/device2.jpg" alt="Device 2" width="300" />
 
 ## 运行示例
 
