@@ -1,30 +1,19 @@
 """播放记录的红外脉冲序列。"""
 
 import argparse
-import time
 
-import lgpio
+from ir_device import IRSender
 
 DEFAULT_PIN = 18  # 默认红外发射 GPIO
 
 
 def play_ir(pin: int, pulses, freq: int = 38000):
     """根据脉冲序列在指定引脚发送红外信号。"""
-    h = lgpio.gpiochip_open(0)
-    lgpio.gpio_claim_output(h, pin)
-
+    sender = IRSender(pin)
     try:
-        level = False
-        for us in pulses:
-            if level:
-                lgpio.tx_pwm(h, pin, freq, 500000)
-            else:
-                lgpio.tx_pwm(h, pin, 0, 0)
-            time.sleep(us / 1_000_000)
-            level = not level
-        lgpio.tx_pwm(h, pin, 0, 0)
+        sender.play(pulses, freq)
     finally:
-        lgpio.gpiochip_close(h)
+        sender.close()
 
 
 def main():

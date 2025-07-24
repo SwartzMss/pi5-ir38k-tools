@@ -1,33 +1,20 @@
 """记录红外遥控器的脉冲序列。"""
 
 import argparse
-import time
 
-import lgpio
+from ir_device import IRReceiver
 
 DEFAULT_PIN = 23  # 默认红外接收头的 GPIO
 
 
 def record_ir(pin: int, timeout: float = 2.0):
     """在给定时间内记录引脚电平变化, 返回微秒为单位的脉冲时长列表。"""
-    h = lgpio.gpiochip_open(0)
-    lgpio.gpio_claim_input(h, pin)
-
-    pulses = []
-    level = lgpio.gpio_read(h, pin)
-    last = time.perf_counter()
-    end_time = last + timeout
-
+    receiver = IRReceiver(pin)
     try:
-        while time.perf_counter() < end_time:
-            if lgpio.gpio_read(h, pin) != level:
-                now = time.perf_counter()
-                pulses.append(int((now - last) * 1_000_000))
-                last = now
-                level ^= 1
+        pulses = receiver.record(timeout)
         return pulses
     finally:
-        lgpio.gpiochip_close(h)
+        receiver.close()
 
 
 def main():
