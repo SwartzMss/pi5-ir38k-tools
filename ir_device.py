@@ -14,6 +14,14 @@ class IRDevice:
         self.handle = lgpio.gpiochip_open(0)
         if direction == "in":
             lgpio.gpio_claim_input(self.handle, pin)
+            # Ensure floating pins default to low level
+            try:
+                lgpio.gpio_set_pull_up_down(
+                    self.handle, pin, lgpio.SET_PULL_DOWN
+                )
+            except AttributeError:
+                # Older lgpio versions may not have pull control
+                pass
         else:
             lgpio.gpio_claim_output(self.handle, pin)
         self.direction = direction
