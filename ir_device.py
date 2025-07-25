@@ -52,12 +52,41 @@ class IRReceiver(IRDevice):
     def __init__(self, pin: int):
         super().__init__(pin, "in")
 
-    def wait(self, timeout: float = 5.0) -> bool:
+    def wait(
+        self,
+        timeout: float = 5.0,
+        confirm: float = 0.05,
+        sample: float = 0.01,
+    ) -> bool:
+        """Wait until the pin stays high for ``confirm`` seconds.
+
+        The previous implementation returned ``True`` as soon as a single
+        high level was read, which could lead to false positives when the
+        GPIO pin was left floating.  By requiring the signal to remain high
+        for a short period, spurious readings are filtered out.
+
+        Parameters
+        ----------
+        timeout:
+            Maximum time to wait for a signal in seconds.
+        confirm:
+            Duration in seconds that the signal must stay high to be
+            considered valid.
+        sample:
+            Delay between consecutive readings in seconds.
+        """
+
         start = time.time()
+        high_start: float | None = None
         while time.time() - start < timeout:
             if lgpio.gpio_read(self.handle, self.pin):
-                return True
-            time.sleep(0.01)
+                if high_start is None:
+                    high_start = time.time()
+                elif time.time() - high_start >= confirm:
+                    return True
+            else:
+                high_start = None
+            time.sleep(sample)
         return False
 
     def record(self, timeout: float = 2.0) -> list[int]:
