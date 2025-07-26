@@ -1,111 +1,52 @@
-"""Infrared device utilities with class-based interfaces."""
+"""LIRC infrared utilities using the kernel gpio-ir driver."""
 
+from __future__ import annotations
+
+import array
+import fcntl
+import os
+import struct
+import time
 from typing import Iterable
 
-import lgpio
-import time
+# IOCTL constants calculated from linux/lirc.h
+LIRC_MODE_PULSE = 0x00000002
+LIRC_SET_SEND_MODE = 0x40046911
+LIRC_SET_REC_MODE = 0x40046912
+LIRC_SET_SEND_CARRIER = 0x40046913
+LIRC_SET_SEND_DUTY_CYCLE = 0x40046915
+LIRC_SET_REC_TIMEOUT = 0x40046918
+LIRC_SET_REC_TIMEOUT_REPORTS = 0x40046919
 
 
-class IRDevice:
-    """Base class handling open/close of a GPIO pin."""
-
-    def __init__(self, pin: int, direction: str):
-        self.pin = pin
-        self.handle = lgpio.gpiochip_open(0)
-        if direction == "in":
-            lgpio.gpio_claim_input(self.handle, pin)
-            # Ensure floating pins default to low level
-            try:
-                lgpio.gpio_set_pull_up_down(
-                    self.handle, pin, lgpio.SET_PULL_DOWN
-                )
-            except AttributeError:
-                # Older lgpio versions may not have pull control
-                pass
-        else:
-            lgpio.gpio_claim_output(self.handle, pin)
-        self.direction = direction
-
-    def close(self) -> None:
-        lgpio.gpiochip_close(self.handle)
+def record_pulses(device: str = "/dev/lirc0", timeout: float = 2.0) -> list[int]:
+    """Record raw pulses from ``device`` for up to ``timeout`` seconds."""
+    pulses: list[int] = []
+    with open(device, "rb", buffering=0) as f:
+        fcntl.ioctl(f, LIRC_SET_REC_MODE, LIRC_MODE_PULSE)
+        fcntl.ioctl(f, LIRC_SET_REC_TIMEOUT, int(timeout * 1_000_000))
+        fcntl.ioctl(f, LIRC_SET_REC_TIMEOUT_REPORTS, 1)
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
+            data = f.read(4)
+            if not data:
+                break
+            pulses.append(struct.unpack("I", data)[0])
+    return pulses
 
 
-class IRSender(IRDevice):
-    """Send infrared signals on a given GPIO pin."""
+def send_pulses(
+    pulses: Iterable[int],
+    device: str = "/dev/lirc0",
+    freq: int = 38000,
+    duty_cycle: float = 0.33,
+) -> None:
+    """Send ``pulses`` using ``device`` with given frequency and duty cycle."""
+    with open(device, "wb", buffering=0) as f:
+        fcntl.ioctl(f, LIRC_SET_SEND_MODE, LIRC_MODE_PULSE)
+        fcntl.ioctl(f, LIRC_SET_SEND_CARRIER, freq)
+        duty = int(duty_cycle * 100)
+        fcntl.ioctl(f, LIRC_SET_SEND_DUTY_CYCLE, duty)
+        arr = array.array("I", pulses)
+        os.write(f.fileno(), arr.tobytes())
 
-    def __init__(self, pin: int):
-        super().__init__(pin, "out")
-
-    def send_pulse(self, duration: float = 0.5, freq: int = 38000, duty_cycle: float = 0.5) -> None:
-        duty = int(duty_cycle * 1_000_000)
-        lgpio.tx_pwm(self.handle, self.pin, freq, duty)
-        time.sleep(duration)
-        lgpio.tx_pwm(self.handle, self.pin, 0, 0)
-
-    def play(self, pulses: Iterable[int], freq: int = 38000) -> None:
-        level = False
-        for us in pulses:
-            if level:
-                lgpio.tx_pwm(self.handle, self.pin, freq, 500000)
-            else:
-                lgpio.tx_pwm(self.handle, self.pin, 0, 0)
-            time.sleep(us / 1_000_000)
-            level = not level
-        lgpio.tx_pwm(self.handle, self.pin, 0, 0)
-
-
-class IRReceiver(IRDevice):
-    """Receive infrared signals from a given GPIO pin."""
-
-    def __init__(self, pin: int):
-        super().__init__(pin, "in")
-
-    def wait(
-        self,
-        timeout: float = 5.0,
-        confirm: float = 0.05,
-        sample: float = 0.01,
-    ) -> bool:
-        """Wait until the pin stays high for ``confirm`` seconds.
-
-        The previous implementation returned ``True`` as soon as a single
-        high level was read, which could lead to false positives when the
-        GPIO pin was left floating.  By requiring the signal to remain high
-        for a short period, spurious readings are filtered out.
-
-        Parameters
-        ----------
-        timeout:
-            Maximum time to wait for a signal in seconds.
-        confirm:
-            Duration in seconds that the signal must stay high to be
-            considered valid.
-        sample:
-            Delay between consecutive readings in seconds.
-        """
-
-        start = time.time()
-        high_start: float | None = None
-        while time.time() - start < timeout:
-            if lgpio.gpio_read(self.handle, self.pin):
-                if high_start is None:
-                    high_start = time.time()
-                elif time.time() - high_start >= confirm:
-                    return True
-            else:
-                high_start = None
-            time.sleep(sample)
-        return False
-
-    def record(self, timeout: float = 2.0) -> list[int]:
-        pulses: list[int] = []
-        level = lgpio.gpio_read(self.handle, self.pin)
-        last = time.perf_counter()
-        end_time = last + timeout
-        while time.perf_counter() < end_time:
-            if lgpio.gpio_read(self.handle, self.pin) != level:
-                now = time.perf_counter()
-                pulses.append(int((now - last) * 1_000_000))
-                last = now
-                level ^= 1
-        return pulses
