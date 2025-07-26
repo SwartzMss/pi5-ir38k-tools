@@ -1,35 +1,40 @@
 # pi5-ir38k-tools
 
-这是一个基于 Raspberry Pi 5 的 38kHz 红外收发示例。本仓库提供硬件连接图以及 Python 示例代码，演示如何使用 `lgpio` 库发送和接收红外信号。
+基于 Linux 内核 `gpio-ir` 驱动和 LIRC 的红外收发示例。
 
-## 准备工作
+*录一次，永远复现*
 
-1. 安装 `lgpio`：`sudo apt install python3-lgpio`
-2. 将红外发射管连接到 GPIO18，红外接收头连接到 GPIO23，具体接线可参考下图。
-3. 脚本会为接收引脚启用内部下拉电阻，未接线时也能保持低电平。
+## 硬件连接
 
-<img src="doc/device1.jpg" alt="Device 1" width="300" />
-<img src="doc/device2.jpg" alt="Device 2" width="300" />
+1. 红外发射管连接 GPIO18
+2. 红外接收头连接 GPIO23
+3. 参考 `doc` 目录的示意图完成接线
 
-## 运行示例
+## 软件准备
 
-在连接好硬件后，可分别运行发射和接收脚本，并使用 `--pin` 参数指定 GPIO：
+1. 在 `/boot/firmware/config.txt` 中启用覆盖：
+   ```
+   dtoverlay=gpio-ir,gpio_pin=23
+   dtoverlay=gpio-ir-tx,gpio_pin=18
+   ```
+2. 安装 LIRC 工具：`sudo apt install lirc`
 
-```bash
-sudo python3 ir_send.py --pin 18    # 发送38kHz脉冲，默认使用GPIO18
-sudo python3 ir_recv.py --pin 23    # 等待接收信号，默认使用GPIO23
-```
-
-两个脚本配合使用可测试硬件连线是否正确。
-
-
-## 学习与回放遥控码
-
-若要控制空调等设备，可以先记录遥控器发出的红外脉冲，再重新发送这些脉冲。
+## 录制一次
 
 ```bash
-sudo python3 ir_record.py --pin 23 --timeout 2 > code.txt  # 记录按键脉冲
-sudo python3 ir_play.py --pin 18 "$(cat code.txt)"          # 重放记录的脉冲
+sudo python3 ir_record.py --device /dev/lirc0 --timeout 2 > code.txt
 ```
 
-`ir_record.py` 会输出逗号分隔的脉冲时长（微秒），`ir_play.py` 按顺序重新播放这些脉冲，从而模拟遥控器发送信号。
+## 重复回放
+
+```bash
+sudo python3 ir_play.py --device /dev/lirc0 "$(cat code.txt)"
+```
+
+`ir_record.py` 会输出逗号分隔的脉冲时长（单位：微秒）。
+将结果存入文件后，可使用 `ir_play.py` 无限次重放。
+
+## 其他脚本
+
+- `ir_send.py`：发送固定脉冲，测试发射硬件。
+- `ir_recv.py`：简单等待信号，可用于检查接收硬件。

@@ -1,27 +1,19 @@
-"""示例代码：在 Raspberry Pi 5 上发送 38kHz 红外信号。"""
+"""Send a single infrared pulse for testing."""
 
 import argparse
+from ir_device import send_pulses
 
-from ir_device import IRSender
 
-DEFAULT_PIN = 18  # 默认红外 LED 所在的 GPIO
-
-def main():
-    parser = argparse.ArgumentParser(description="发送 38kHz 红外信号")
-    parser.add_argument(
-        "--pin",
-        type=int,
-        default=DEFAULT_PIN,
-        help="用于发射的 GPIO (默认: %(default)s)",
-    )
+def main() -> None:
+    parser = argparse.ArgumentParser(description="send test pulse")
+    parser.add_argument("--device", default="/dev/lirc0", help="LIRC device path")
+    parser.add_argument("--duration", type=float, default=0.5, help="pulse duration in seconds")
+    parser.add_argument("--freq", type=int, default=38000, help="carrier frequency")
     args = parser.parse_args()
 
-    sender = IRSender(args.pin)
-    try:
-        print("发送 38kHz 脉冲...")
-        sender.send_pulse()
-    finally:
-        sender.close()
+    send_pulses([int(args.duration * 1_000_000)], args.device, args.freq)
+
 
 if __name__ == "__main__":
     main()
+

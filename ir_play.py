@@ -1,31 +1,26 @@
-"""播放记录的红外脉冲序列。"""
+"""Replay infrared pulses via the LIRC device."""
 
 import argparse
-
-from ir_device import IRSender
-
-DEFAULT_PIN = 18  # 默认红外发射 GPIO
+from ir_device import send_pulses
 
 
-def play_ir(pin: int, pulses, freq: int = 38000):
-    """根据脉冲序列在指定引脚发送红外信号。"""
-    sender = IRSender(pin)
-    try:
-        sender.play(pulses, freq)
-    finally:
-        sender.close()
-
-
-def main():
-    parser = argparse.ArgumentParser(description="播放红外脉冲序列")
-    parser.add_argument("codes", help="逗号分隔的脉冲时长(微秒)")
-    parser.add_argument("--pin", type=int, default=DEFAULT_PIN, help="发射红外的GPIO")
-    parser.add_argument("--freq", type=int, default=38000, help="载波频率")
+def main() -> None:
+    parser = argparse.ArgumentParser(description="play back IR pulses")
+    parser.add_argument("codes", help="comma separated pulse durations")
+    parser.add_argument("--device", default="/dev/lirc0", help="LIRC device path")
+    parser.add_argument("--freq", type=int, default=38000, help="carrier frequency")
+    parser.add_argument("--duty", type=float, default=0.33, help="duty cycle (0-1)")
     args = parser.parse_args()
 
-    pulses = [int(x) for x in args.codes.split(',') if x]
-    play_ir(args.pin, pulses, args.freq)
+    if args.codes.startswith("@"):  # read from file
+        with open(args.codes[1:], "r") as fh:
+            codes_str = fh.read().strip()
+    else:
+        codes_str = args.codes
+    pulses = [int(x) for x in codes_str.split(',') if x]
+    send_pulses(pulses, args.device, args.freq, args.duty)
 
 
 if __name__ == "__main__":
     main()
+
