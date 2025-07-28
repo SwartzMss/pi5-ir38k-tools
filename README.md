@@ -173,10 +173,6 @@ irrecord -d /dev/lirc0 ~/myremote.conf
 ```bash
 sudo cp ~/myremote.conf /etc/lirc/lircd.conf.d/
 sudo systemctl restart lircd
-
-```bash
-sudo cp ~/myremote.conf /etc/lirc/lircd.conf.d/
-sudo systemctl restart lircd
 ```
 
 ### 5.2 命令行发射测试
