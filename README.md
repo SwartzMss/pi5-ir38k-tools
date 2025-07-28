@@ -1,7 +1,7 @@
 
-# 树莓派 Pi 5 红外信号接收（LIRC + Python 虚拟环境）
+# 树莓派 Pi 5 红外信号收发（LIRC + Python 虚拟环境）
 
-本教程介绍如何在 Raspberry Pi 5 上，通过 LIRC 驱动和 Python 虚拟环境，**接收并识别红外遥控器信号**，为后续自动化或自定义开发打下基础。
+本教程介绍如何在 Raspberry Pi 5 上，通过 LIRC 驱动和 Python 虚拟环境，**接收并发射红外遥控器信号**，为后续自动化或自定义开发打下基础。
 
 ---
 
@@ -9,17 +9,18 @@
 
 - 树莓派 Pi 5
 - 红外接收头（如 VS1838B）
+- 红外发射管
 - 面包板、杜邦线
-  
+
 ### 1.1 接线示意
 
-| 红外接收头引脚 | 连接到 Pi 5  |
-|:------------:|:------------:|
-| OUT          | GPIO23 (BCM23)|
-| VCC          | 3.3V         |
-| GND          | GND          |
-
-> 建议：OUT 同时接一个 10KΩ 电阻下拉到 GND，可减少误触发
+| 组件     | 引脚           | 连接到 Pi 5         |
+|:--------:|:--------------:|:-------------------:|
+| 接收头    | OUT            | GPIO23 (BCM23)      |
+| 接收头    | VCC            | 3.3V                |
+| 接收头    | GND            | GND                 |
+| 发射管    | + 极（长脚）    | GPIO18 (BCM18)      |
+| 发射管    | - 极（短脚）    | GND                 |
 
 ---
 
@@ -34,6 +35,7 @@ sudo nano /boot/firmware/config.txt
 
 ```ini
 dtoverlay=gpio-ir,gpio_pin=23
+dtoverlay=gpio-ir-tx,gpio_pin=18
 ```
 
 保存并退出。
@@ -48,7 +50,7 @@ sudo reboot
 
 ```bash
 ls /dev/lirc*
-# 应有 /dev/lirc0
+# 应有 /dev/lirc0（接收），/dev/lirc1（发射）
 ```
 
 ---
@@ -76,6 +78,7 @@ sudo nano /etc/lirc/lirc_options.conf
 driver = default
 device = /dev/lirc0
 ```
+> 注意：这里只需要配置接收设备，发射时用 `irsend` 或 python 绑定直接指定 `/dev/lirc1`。
 
 ---
 
@@ -153,28 +156,74 @@ finally:
 
 ---
 
-## 5. 常见故障与排查
+## 5. 红外信号发射配置与代码
 
-- `/dev/lirc0` 不存在？  
-  → 检查 overlay 配置、接线、重启是否到位
+### 5.1 录制或编辑遥控器码表
 
-- `irw` 没反应？  
-  → 检查红外头引脚、下拉电阻、遥控器电池
+- 使用 LIRC 工具录制遥控器码表（如仅发射简单码可跳过此步，直接手动写配置文件）。
 
-- Python 报错找不到 lirc？  
-  → 确认已激活虚拟环境，并已安装 `python-lirc`
+```bash
+irrecord -d /dev/lirc0 ~/myremote.conf
+```
+跟随提示按遥控器各键，保存配置文件。录制后，可以将其拷贝到 LIRC 配置目录：
 
-- 输出内容乱码或总是同一个？  
-  → 遥控器协议未适配，多换几种遥控器或尝试录制码表
+```bash
+sudo cp ~/myremote.conf /etc/lirc/lircd.conf.d/
+sudo systemctl restart lircd
+```
+
+### 5.2 命令行发射测试
+
+假设码表定义如下：
+```
+begin remote
+
+  name  myremote
+  ...
+  begin codes
+      KEY_POWER           0x00FF00FF
+  end codes
+end remote
+```
+
+发射红外信号（指定发射设备）:
+```bash
+irsend -d /dev/lirc1 SEND_ONCE myremote KEY_POWER
+```
+
+### 5.3 Python 发射示例
+
+在虚拟环境中，使用如下代码发送遥控器按键（如 KEY_POWER）：
+
+```python
+import lirc
+import time
+
+# 注意 lirc.init 只影响接收，用发射功能可直接用 send_once
+print("发送红外 KEY_POWER 信号...")
+for _ in range(3):
+    lirc.send_once("myremote", ["KEY_POWER"], lircd="/var/run/lirc/lircd", device="/dev/lirc1")
+    time.sleep(2)
+print("发射结束")
+```
+
+> 前提：`myremote.conf` 已配置好，并已加载到 lircd（见前文），KEY_POWER 为有效码表按键。
 
 ---
 
-## 6. 后续拓展
+## 6. 常见故障与排查
 
-- 录制遥控器码表，做协议识别
-- 用 Python 自动执行不同操作
-- 与 Home Assistant、Node-RED 等集成
+- `/dev/lirc1` 不存在？  
+  → 检查 overlay 配置，确认 `dtoverlay=gpio-ir-tx,gpio_pin=18` 已加，重启后再查
+
+- `irsend` 无反应？  
+  → 检查发射管接线、极性、红外管朝向和目标设备距离。部分家电需靠近才有效。
+
+- Python 报错或发射没反应？  
+  → 检查 myremote.conf 是否已加载，KEY_POWER 是否录制正确。
+
+- KEY_POWER 没有效果？  
+  → 多录几次，尝试其他按键或其他家电。
 
 ---
 
-**发射功能请见后续文档！**
