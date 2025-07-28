@@ -213,7 +213,7 @@ print("发射结束")
 也可以直接运行仓库提供的 `ir_send_key.py` 脚本：
 
 ```bash
-python ir_send_key.py myremote KEY_POWER --count 3
+python ir_send_key.py --remote myremote --key KEY_POWER --count 3
 ```
 
 > 前提：`myremote.conf` 已配置好，并已加载到 lircd（见前文），KEY_POWER 为有效码表按键。
