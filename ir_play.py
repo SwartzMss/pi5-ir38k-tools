@@ -7,7 +7,7 @@ from ir_device import send_pulses
 def main() -> None:
     parser = argparse.ArgumentParser(description="play back IR pulses")
     parser.add_argument("codes", help="comma separated pulse durations")
-    parser.add_argument("--device", default="/dev/lirc0", help="LIRC device path")
+    parser.add_argument("--device", default="/dev/lirc1", help="LIRC device path")
     parser.add_argument("--freq", type=int, default=38000, help="carrier frequency")
     parser.add_argument("--duty", type=float, default=0.33, help="duty cycle (0-1)")
     args = parser.parse_args()
