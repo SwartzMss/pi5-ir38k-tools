@@ -160,12 +160,19 @@ finally:
 
 ### 5.1 录制或编辑遥控器码表
 
-- 使用 LIRC 工具录制遥控器码表（如仅发射简单码可跳过此步，直接手动写配置文件）。
+- 使用 LIRC 工具录制遥控器码表。
 
 ```bash
 irrecord -d /dev/lirc0 ~/myremote.conf
 ```
-跟随提示按遥控器各键，保存配置文件。录制后，可以将其拷贝到 LIRC 配置目录：
+跟随提示按遥控器各键，保存配置文件。制完配置文件后，需要**将其拷贝到 LIRC 的配置目录**，并重启 LIRC 服务。  
+这是因为 LIRC 只会自动加载 `/etc/lirc/lircd.conf` 和 `/etc/lirc/lircd.conf.d/` 目录下的码表文件，只有这样你后续在使用 `irsend` 命令或 Python 代码时，才能成功找到你自定义的遥控器名称（如 `myremote`）。如果没有完成这一步，发射时会报“找不到遥控器”相关的错误。
+
+拷贝并重启服务命令如下：
+
+```bash
+sudo cp ~/myremote.conf /etc/lirc/lircd.conf.d/
+sudo systemctl restart lircd
 
 ```bash
 sudo cp ~/myremote.conf /etc/lirc/lircd.conf.d/
