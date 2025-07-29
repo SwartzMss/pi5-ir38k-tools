@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Dict, List, Literal, Union, Optional
 
 # Constants
-THRESHOLD_GAP_US = 30000  # 长空间阈值，用于分隔帧
+THRESHOLD_GAP_US = 8000   # 长空间阈值，用于分隔帧
 BIT_THRESHOLD_US = 1000    # 默认位空间阈值
 
 # NEC 重复帧标记
