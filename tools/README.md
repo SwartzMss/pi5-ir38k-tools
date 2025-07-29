@@ -17,6 +17,9 @@ python tools/mode2_to_lirc.py --log xxx.log --key KEY_UP \
 - `--name`：生成的遥控器名称，默认为 `myremote`。
 - `--proto`：协议类型，可选 `nec` 或 `raw`，默认为 `nec`。
 
+脚本会自动统计 header、zero/one、gap 等时序参数，并给出适合 `eps`、`aeps`
+和 `bits` 的值。
+
 如未解析到有效码值或检测到多个不同码值，脚本会报错并显示帮助信息。
 
 录制时建议**轻按后立即松手**，避免 NEC 重复帧干扰。
