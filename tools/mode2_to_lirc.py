@@ -18,11 +18,14 @@ python tools/mode2_to_lirc.py --log xxx.log --key KEY_UP \
 import argparse
 import statistics
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 THRESHOLD_GAP_US = 30000  # consider a space longer than this as key separator
-BIT_THRESHOLD_US = 1000   # spaces larger than this treated as logical 1
+BIT_THRESHOLD_US = 1000   # default logic-1 space threshold
+
+# returned by ``decode_protocol_nec`` when detecting a NEC repeat frame
+NEC_REPEAT = "__repeat__"
 
 
 def parse_log(path: Path) -> List[List[int]]:
@@ -51,27 +54,84 @@ def parse_log(path: Path) -> List[List[int]]:
     return groups
 
 
-def decode_protocol_nec(pulses: List[int]) -> int | None:
-    """Decode a NEC infrared sequence into an integer code."""
-    if len(pulses) < 4:
+def compute_nec_stats(groups: List[List[int]]) -> Dict[str, int]:
+    """Compute median-based NEC timing stats for adaptive decoding."""
+    header_pulses = [g[0] for g in groups if len(g) > 1]
+    header_spaces = [g[1] for g in groups if len(g) > 1]
+    bit_pulses: List[int] = []
+    bit_spaces: List[int] = []
+    for g in groups:
+        for i in range(2, len(g), 2):
+            if i + 1 < len(g):
+                bit_pulses.append(g[i])
+                bit_spaces.append(g[i + 1])
+
+    hp_med = statistics.median(header_pulses) if header_pulses else 9000
+    hs_med = statistics.median(header_spaces) if header_spaces else 4500
+    bp_med = statistics.median(bit_pulses) if bit_pulses else 560
+    space_med = statistics.median(bit_spaces) if bit_spaces else BIT_THRESHOLD_US
+
+    zero_spaces = [s for s in bit_spaces if s < space_med]
+    one_spaces = [s for s in bit_spaces if s >= space_med]
+    zs_med = statistics.median(zero_spaces) if zero_spaces else space_med * 0.5
+    os_med = statistics.median(one_spaces) if one_spaces else space_med * 1.5
+    threshold = int((zs_med + os_med) / 2)
+
+    return {
+        "header_pulse": int(hp_med),
+        "header_space": int(hs_med),
+        "bit_pulse": int(bp_med),
+        "zero_space": int(zs_med),
+        "one_space": int(os_med),
+        "header_pulse_min": int(hp_med * 0.9),
+        "header_pulse_max": int(hp_med * 1.1),
+        "header_space_min": int(hs_med * 0.9),
+        "header_space_max": int(hs_med * 1.1),
+        "bit_threshold": threshold,
+    }
+
+
+def decode_protocol_nec(
+    pulses: List[int],
+    stats: Optional[Dict[str, int]] = None,
+    supported_lengths: Optional[List[int]] = None,
+) -> int | str | None:
+    """Decode a NEC infrared sequence into an integer code.
+
+    Returns ``NEC_REPEAT`` for repeat frames, ``None`` for invalid frames,
+    otherwise the integer value.
+    """
+    if supported_lengths is None:
+        supported_lengths = [16, 32]
+
+    hp_min = stats["header_pulse_min"] if stats else 8000
+    hp_max = stats["header_pulse_max"] if stats else 10000
+    hs_min = stats["header_space_min"] if stats else 4000
+    hs_max = stats["header_space_max"] if stats else 5000
+    threshold = stats["bit_threshold"] if stats else BIT_THRESHOLD_US
+
+    if len(pulses) < 3:
         return None
-    if pulses[0] < 8000 or pulses[0] > 10000:
+
+    if not (hp_min <= pulses[0] <= hp_max):
         return None
-    if pulses[1] < 4000 or pulses[1] > 5000:
+    if not (hs_min <= pulses[1] <= hs_max):
         return None
-    bits = []
+
+    # repeat frame: header + 560us pulse and short length
+    if len(pulses) <= 4 and pulses[2] <= 700:
+        return NEC_REPEAT
+
+    bits: List[int] = []
     i = 2
     while i + 1 < len(pulses):
         pulse = pulses[i]
         space = pulses[i + 1]
         if pulse < 200:
             break
-        if space > BIT_THRESHOLD_US:
-            bits.append(1)
-        else:
-            bits.append(0)
+        bits.append(1 if space > threshold else 0)
         i += 2
-    if len(bits) not in {16, 32}:
+    if len(bits) not in supported_lengths:
         return None
     value = 0
     for b in bits:
@@ -150,6 +210,19 @@ def build_conf_raw(
     return "\n".join(lines)
 
 
+def build_space_enc_template(stats: Dict[str, int]) -> str:
+    """Generate a SPACE_ENC timing snippet based on measured stats."""
+    lines = [
+        "# Suggested SPACE_ENC timings",
+        f"  header   {stats['header_pulse']}   {stats['header_space']}",
+        f"  zero     {stats['bit_pulse']}   {stats['zero_space']}",
+        f"  one      {stats['bit_pulse']}   {stats['one_space']}",
+        f"  ptrail   {stats['bit_pulse']}",
+        f"  gap      {THRESHOLD_GAP_US}",
+    ]
+    return "\n".join(lines)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="将 mode2 日志转换为 LIRC 配置文件")
@@ -178,6 +251,11 @@ def main() -> None:
         help="协议类型：nec 或 raw，默认 nec",
     )
     parser.add_argument(
+        "--bits",
+        default="16,32",
+        help="允许的 NEC 数据位长度，逗号分隔，如 32,40,48",
+    )
+    parser.add_argument(
         "--flags",
         default="SPACE_ENC|CONST_LENGTH",
         help="LIRC remote flags",
@@ -190,12 +268,15 @@ def main() -> None:
     key_name = args.key if args.key else "KEY_1"
 
     if args.proto == "nec":
+        supported_lengths = [int(x) for x in args.bits.split(",") if x.strip()]
+        stats = compute_nec_stats(groups)
         codes_by_value: Dict[int, List[int]] = {}
         order: List[int] = []
         for grp in groups:
-            code = decode_protocol_nec(grp)
-            if code is None:
-                print("警告：有一组数据解码失败，已跳过")
+            code = decode_protocol_nec(grp, stats, supported_lengths)
+            if code in {None, NEC_REPEAT}:
+                if code is None:
+                    print("警告：有一组数据解码失败，已跳过")
                 continue
             if code not in codes_by_value:
                 codes_by_value[code] = []
@@ -211,6 +292,7 @@ def main() -> None:
         codes: List[int] = [round(statistics.fmean(codes_by_value[order[0]]))]
         key_names = [key_name]
         conf = build_conf(codes, key_names, args.name, args.flags)
+        print("\n" + build_space_enc_template(stats))
     else:
         pulses = average_pulses(groups)
         conf = build_conf_raw(pulses, key_name, args.name, args.flags)
