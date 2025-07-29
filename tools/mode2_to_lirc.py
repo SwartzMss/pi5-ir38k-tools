@@ -245,6 +245,8 @@ def build_conf_space_enc(
         f"  zero        {cfg['bit_pulse']} {cfg['zero_space']}",
         f"  ptrail      {cfg['bit_pulse']}",
         f"  gap         {cfg['gap']}",
+        "  min_repeat  0",
+        "  toggle_bit_mask 0x0",
         "  frequency   38000",
         "",
         "  begin codes",
