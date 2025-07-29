@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""将 ``mode2`` 日志转换成 LIRC 配置文件（ENC 编码）。
+"""将 ``mode2`` 日志转换成 LIRC 配置文件。
 
-本脚本仅支持 **NEC 协议** 的 ``mode2`` 输出，需使用 Python 3.10 及以上版本。
+默认会按 **NEC 协议** 解码生成 ENC 格式配置，也可通过 ``--proto raw``
+直接输出 ``RAW_CODES`` 形式的脉冲数据。需使用 Python 3.10 及以上版本。
 
-假设你按照按键顺序依次使用 ``mode2`` 录制，本脚本会自动将相同的 NEC 码归组并求
-均值，因此无需手动指定每个按键的样本次数。
+假设你按照按键顺序依次使用 ``mode2`` 录制，选择 ``nec`` 协议时脚本会将解码
+后的相同码值归组并求均值；``raw`` 协议则直接对脉冲时序取平均。
 
 使用示例：
 
@@ -114,9 +115,44 @@ def build_conf(
     return "\n".join(lines)
 
 
+def average_pulses(groups: List[List[int]]) -> List[int]:
+    """Average multiple pulse sequences index by index."""
+    max_len = max(len(g) for g in groups)
+    avg: List[int] = []
+    for i in range(max_len):
+        values = [g[i] for g in groups if i < len(g)]
+        avg.append(round(statistics.fmean(values)))
+    return avg
+
+
+def build_conf_raw(
+    pulses: List[int],
+    name: str,
+    remote: str = "myremote",
+    flags: str = "RAW_CODES",
+) -> str:
+    """Create a minimal LIRC configuration using RAW_CODES."""
+    lines = [
+        "begin remote",
+        f"  name  {remote}",
+        f"  flags  {flags}",
+        "  eps            30",
+        "  aeps           100",
+        f"  gap           {THRESHOLD_GAP_US}",
+        "  frequency    38000",
+        "",
+        "  begin raw_codes",
+        f"    name {name}",
+        "      " + " ".join(str(p) for p in pulses),
+        "  end raw_codes",
+        "end remote",
+    ]
+    return "\n".join(lines)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="将 mode2 日志转换为 LIRC 的 ENC 格式配置文件")
+        description="将 mode2 日志转换为 LIRC 配置文件")
     parser.add_argument(
         "--log",
         required=True,
@@ -136,6 +172,12 @@ def main() -> None:
     )
     parser.add_argument("--name", default="myremote", help="遥控器名称")
     parser.add_argument(
+        "--proto",
+        choices=["nec", "raw"],
+        default="nec",
+        help="协议类型：nec 或 raw，默认 nec",
+    )
+    parser.add_argument(
         "--flags",
         default="SPACE_ENC|CONST_LENGTH",
         help="LIRC remote flags",
@@ -145,30 +187,34 @@ def main() -> None:
     groups = parse_log(args.log)
     print(f"检测到 {len(groups)} 组数据")
 
-    codes_by_value: Dict[int, List[int]] = {}
-    order: List[int] = []
-    for grp in groups:
-        code = decode_protocol_nec(grp)
-        if code is None:
-            print("警告：有一组数据解码失败，已跳过")
-            continue
-        if code not in codes_by_value:
-            codes_by_value[code] = []
-            order.append(code)
-        codes_by_value[code].append(code)
-
-    if not order:
-        parser.error("未解析出任何有效 NEC 码，退出")
-
-    if len(order) > 1:
-        parser.error("仅支持一次解析单个按键，请确认日志内容")
-
     key_name = args.key if args.key else "KEY_1"
 
-    codes: List[int] = [round(statistics.fmean(codes_by_value[order[0]]))]
-    key_names = [key_name]
+    if args.proto == "nec":
+        codes_by_value: Dict[int, List[int]] = {}
+        order: List[int] = []
+        for grp in groups:
+            code = decode_protocol_nec(grp)
+            if code is None:
+                print("警告：有一组数据解码失败，已跳过")
+                continue
+            if code not in codes_by_value:
+                codes_by_value[code] = []
+                order.append(code)
+            codes_by_value[code].append(code)
 
-    conf = build_conf(codes, key_names, args.name, args.flags)
+        if not order:
+            parser.error("未解析出任何有效 NEC 码，退出")
+
+        if len(order) > 1:
+            parser.error("仅支持一次解析单个按键，请确认日志内容")
+
+        codes: List[int] = [round(statistics.fmean(codes_by_value[order[0]]))]
+        key_names = [key_name]
+        conf = build_conf(codes, key_names, args.name, args.flags)
+    else:
+        pulses = average_pulses(groups)
+        conf = build_conf_raw(pulses, key_name, args.name, args.flags)
+
     args.output.write_text(conf)
     print(f"已写入 {args.output}")
 
