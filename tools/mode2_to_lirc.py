@@ -233,6 +233,14 @@ def build_conf_space_enc(
     remote: str
 ) -> str:
     """生成 SPACE_ENC 格式的 LIRC 配置文本（推荐格式）。"""
+    # 智能设置gap值：如果解析出的gap太小（<30ms），可能是帧内间隙而非帧间间隙
+    if cfg['gap'] < 30000:
+        gap_value = 50000  # 使用标准的50ms帧间间隙
+        logger.info(f"检测到帧内间隙 {cfg['gap']}μs，使用标准帧间间隙 {gap_value}μs")
+    else:
+        gap_value = cfg['gap']  # 使用解析出的值
+        logger.info(f"使用解析出的帧间间隙 {gap_value}μs")
+    
     lines = [
         "begin remote",
         f"  name        {remote}",
@@ -244,7 +252,8 @@ def build_conf_space_enc(
         f"  one         {cfg['bit_pulse']} {cfg['one_space']}",
         f"  zero        {cfg['bit_pulse']} {cfg['zero_space']}",
         f"  ptrail      {cfg['bit_pulse']}",
-        f"  gap         {cfg['gap']}",
+        f"  gap         {gap_value}",
+        f"  repeat_gap  {gap_value}",
         "  min_repeat  0",
         "  toggle_bit_mask 0x0",
         "  frequency   38000",
