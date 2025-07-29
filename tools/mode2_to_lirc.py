@@ -259,6 +259,7 @@ def build_conf_raw(
     flags: str
 ) -> str:
     """生成 RAW_CODES 格式的 LIRC 配置文本。"""
+    # 将脉冲数据分成多行，每行最多16个数值
     lines = [
         "begin remote",
         f"  name      {remote}",
@@ -270,10 +271,18 @@ def build_conf_raw(
         "",
         "  begin raw_codes",
         f"    {key}",
-        "      " + " ".join(str(x) for x in pulses),
+    ]
+    
+    # 将脉冲数据分行，每行16个数值
+    pulse_strs = [str(x) for x in pulses]
+    for i in range(0, len(pulse_strs), 16):
+        line_data = pulse_strs[i:i+16]
+        lines.append("      " + " ".join(line_data))
+    
+    lines.extend([
         "  end raw_codes",
         "end remote"
-    ]
+    ])
     return "\n".join(lines)
 
 
