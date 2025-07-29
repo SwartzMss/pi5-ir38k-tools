@@ -60,6 +60,59 @@ python mode2_to_lirc.py \
 - 建议录制 3-5 次按键操作，脚本会自动计算平均时序。
 - 建议录制时**轻按后立即松手**，避免重复帧干扰。
 
+## RAW_CODES 格式问题与解决方案
+
+### 常见问题
+
+在使用生成的 RAW_CODES 配置文件时，可能遇到以下 LIRC 错误：
+
+```
+Error: bad signal length
+Error: error in configfile line XX
+Warning: config file contains no valid remote control definition
+```
+
+### 问题原因
+
+1. **多帧混合**：RAW_CODES 中每个按键只能包含单帧数据，不能包含多次按键的数据
+2. **包含帧间隙**：7000+μs 的大间隙值是帧分隔符，不应出现在 RAW_CODES 数据中
+3. **格式不正确**：缩进和语法必须严格符合 LIRC 官方标准
+4. **数据长度异常**：过长或过短的数据可能导致解析失败
+
+### 解决方案
+
+脚本已实现以下修复机制：
+
+- ✅ **单帧提取**：只输出第一个完整帧的数据
+- ✅ **间隙过滤**：智能检测并移除大于 6000μs 的间隙值
+- ✅ **格式标准化**：严格按照 LIRC 官方文档格式输出
+- ✅ **数据验证**：确保偶数个值（pulse-space 对）
+
+### 测试配置文件
+
+目录中提供了多个测试配置文件用于验证 LIRC 兼容性：
+
+- `test1_minimal.conf` - 极简格式（8个值）
+- `test2_standard.conf` - 标准 NEC 协议格式
+- `test3_medium.conf` - 中等长度（24个值）
+- `test4_different.conf` - 不同缩进格式测试
+- `test5_space_enc.conf` - 传统 SPACE_ENC 格式对比
+
+### 测试方法
+
+```bash
+# 复制测试配置到 LIRC 目录
+sudo cp test1_minimal.conf /etc/lirc/lircd.conf.d/
+
+# 重启 LIRC 服务
+sudo systemctl restart lircd
+
+# 检查状态
+sudo systemctl status lircd
+```
+
+如果所有 RAW_CODES 格式都失败，建议使用 `test5_space_enc.conf` 中的传统格式。
+
 ---
 
 © 2025 SwartzMss
