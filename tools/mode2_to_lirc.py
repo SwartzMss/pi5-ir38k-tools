@@ -259,6 +259,12 @@ def build_conf_raw(
     flags: str
 ) -> str:
     """生成 RAW_CODES 格式的 LIRC 配置文本。"""
+    # 确保脉冲数据是偶数个数值（脉冲-空间对）
+    if len(pulses) % 2 != 0:
+        logger.warning(f"脉冲数据个数为奇数 ({len(pulses)})，添加结束脉冲")
+        # 添加一个短脉冲作为结束
+        pulses = pulses + [500]
+    
     # 将脉冲数据分成多行，每行最多16个数值
     lines = [
         "begin remote",
@@ -313,6 +319,15 @@ def main() -> None:
 
     # 对所有帧取平均，生成 RAW_CODES 格式
     avg = average_pulses(frames)
+    
+    # 验证数据完整性
+    if len(avg) < 4:
+        parser.error(f"平均脉冲数据过短 ({len(avg)} 个值)，无法生成有效的红外信号")
+    
+    logger.info(f"平均脉冲数据长度: {len(avg)} 个值")
+    if len(avg) % 2 != 0:
+        logger.warning("脉冲数据个数为奇数，将自动修正为偶数个")
+    
     content = build_conf_raw(avg, args.key, args.name, flags)
 
     args.output.write_text(content)
