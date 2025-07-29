@@ -78,6 +78,16 @@ def decode_protocol_nec(pulses: List[int]) -> int | None:
     return value
 
 
+def decode_protocol_rc5(pulses: List[int]) -> int | None:
+    """Placeholder for RC5 protocol decoder."""
+    return None
+
+
+def decode_protocol_sony(pulses: List[int]) -> int | None:
+    """Placeholder for Sony protocol decoder."""
+    return None
+
+
 def build_conf(codes: List[int], names: List[str], remote: str = "myremote") -> str:
     """Create a minimal LIRC configuration in ENC (encoded) format."""
     lines = [
@@ -109,9 +119,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--key",
-        action="append",
-        dest="keys",
-        help="按录制顺序指定按键名称，可重复多次",
+        help="按键名称，默认为 KEY_1",
     )
     parser.add_argument(
         "--output",
@@ -141,12 +149,13 @@ def main() -> None:
     if not order:
         parser.error("未解析出任何有效 NEC 码，退出")
 
-    if args.keys and len(args.keys) != len(order):
-        parser.error("number of key names must match detected unique codes")
+    if len(order) > 1:
+        parser.error("仅支持一次解析单个按键，请确认日志内容")
 
-    key_names = args.keys if args.keys else [f"KEY_{i+1}" for i in range(len(order))]
+    key_name = args.key if args.key else "KEY_1"
 
-    codes: List[int] = [round(statistics.fmean(codes_by_value[c])) for c in order]
+    codes: List[int] = [round(statistics.fmean(codes_by_value[order[0]]))]
+    key_names = [key_name]
 
     conf = build_conf(codes, key_names, args.name)
     args.output.write_text(conf)
