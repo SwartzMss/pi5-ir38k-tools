@@ -1,11 +1,11 @@
-"""将 mode2 日志转换为 LIRC 配置文件。
+"""将 mode2 日志转换为 LIRC RAW_CODES 配置文件。
 
-支持 NEC、RAW 及格力（Gree）空调协议，自动检测所有参数，无需手动设置。
+专注于 RAW_CODES 模式，避免 64 位限制问题，支持所有类型的红外遥控器。
 Requires Python 3.10+
 
 Usage:
-  python mode2_to_lirc.py --log key.log --key KEY_UP \
-      --output myremote.conf --name myremote --proto [nec|raw|gree]
+  python mode2_to_lirc.py --log key.log --key KEY_POWER \
+      --output myremote.conf --name myremote
 """
 import argparse
 import logging
@@ -221,7 +221,7 @@ def build_conf(
     remote: str,
     flags: str
 ) -> str:
-    """生成 SPACE_ENC 格式的 LIRC 配置文本。"""
+    """生成 SPACE_ENC 格式的 LIRC 配置文本。（已弃用，建议使用 RAW_CODES 模式）"""
     lines = [
         "begin remote",
         f"  name        {remote}",
@@ -279,17 +279,16 @@ def build_conf_raw(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="将 mode2 日志转换为 LIRC 配置文件"
+        description="将 mode2 日志转换为 LIRC RAW_CODES 配置文件"
     )
     parser.add_argument("--log", type=Path, required=True, help="mode2 输出的日志文件路径")
     parser.add_argument("--key", default="KEY_1", help="按键名称，默认 KEY_1")
     parser.add_argument("-o", "--output", type=Path, default=Path("remote.conf"), help="输出 conf 文件路径")
     parser.add_argument("--name", default="myremote", help="遥控器名称，默认 myremote")
-    parser.add_argument("--proto", choices=["nec", "raw", "gree"], default="nec", help="协议类型：nec、raw 或 gree，默认 nec")
     args = parser.parse_args()
 
-    # 自动生成 flags
-    flags = "SPACE_ENC|CONST_LENGTH" if args.proto in ("nec", "gree") else "RAW_CODES"
+    # 固定使用 RAW_CODES 格式
+    flags = "RAW_CODES"
 
     try:
         frames = parse_log(args.log)
@@ -303,56 +302,12 @@ def main() -> None:
     if not frames:
         parser.error("未检测到任何帧数据，请检查日志文件格式或阈值设置。")
 
-    if args.proto == "nec":
-        cfg = auto_detect_params(frames)
-        lengths = [cfg["bits"]]
-        codes: List[int] = []
-        for frame in frames:
-            res = decode_protocol_nec(frame, cfg, lengths)
-            if res is None:
-                logger.warning("NEC 解码失败，已跳过")
-            elif res != NEC_REPEAT:
-                codes.append(res)
-        if not codes:
-            parser.error("未解析到任何 NEC 码")
-        if len(set(codes)) > 1:
-            parser.error("检测到多个不同 NEC 码值，请确保只记录一个按键")
-        code = round(statistics.fmean(codes))
-        content = build_conf(code, args.key, cfg, args.name, flags)
-
-    elif args.proto == "gree":
-        try:
-            cfg = auto_detect_params(frames)
-            logger.info(f"自动检测的参数: {cfg}")
-            codes: List[int] = []
-            for i, frame in enumerate(frames):
-                logger.info(f"处理第 {i+1} 帧，长度: {len(frame)}")
-                res = decode_protocol_gree(frame, cfg)
-                if res is None:
-                    logger.warning(f"第 {i+1} 帧 Gree 解码失败，已跳过")
-                else:
-                    logger.info(f"第 {i+1} 帧解码成功: 0x{res:X}")
-                    codes.append(res)
-            if not codes:
-                parser.error("未解析到任何 Gree 码")
-            if len(set(codes)) > 1:
-                logger.warning(f"检测到多个不同 Gree 码值: {[hex(c) for c in set(codes)]}")
-                logger.warning("将使用平均值")
-            code = round(statistics.fmean(codes))
-            logger.info(f"最终码值: 0x{code:X}")
-            content = build_conf(code, args.key, cfg, args.name, flags)
-        except Exception as e:
-            logger.error(f"处理 Gree 协议时出错: {e}")
-            import traceback
-            traceback.print_exc()
-            parser.error(f"处理 Gree 协议时出错: {e}")
-
-    else:
-        avg = average_pulses(frames)
-        content = build_conf_raw(avg, args.key, args.name, flags)
+    # 对所有帧取平均，生成 RAW_CODES 格式
+    avg = average_pulses(frames)
+    content = build_conf_raw(avg, args.key, args.name, flags)
 
     args.output.write_text(content)
-    logger.info(f"配置已写入 {args.output}")
+    logger.info(f"RAW_CODES 配置已写入 {args.output}")
 
 if __name__ == "__main__":
     main()
