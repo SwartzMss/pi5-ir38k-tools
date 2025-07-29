@@ -27,10 +27,17 @@ logger = logging.getLogger(__name__)
 
 def parse_log(path: Path) -> List[List[int]]:
     """流式读取 mode2 日志，返回脉冲/空间序列列表（按帧分组）。"""
+    if not path.exists():
+        raise FileNotFoundError(f"日志文件不存在: {path}")
+    
     groups: List[List[int]] = []
     current: List[int] = []
+    line_count = 0
+    valid_lines = 0
+    
     with path.open() as f:
         for line in f:
+            line_count += 1
             parts = line.strip().split()
             if len(parts) != 2:
                 continue
@@ -39,6 +46,7 @@ def parse_log(path: Path) -> List[List[int]]:
                 continue
             try:
                 val = int(raw)
+                valid_lines += 1
             except ValueError:
                 continue
             # 长空间视为帧分隔符
@@ -49,11 +57,24 @@ def parse_log(path: Path) -> List[List[int]]:
             current.append(val)
     if current:
         groups.append(current)
+    
+    logger.info(f"读取了 {line_count} 行，有效数据 {valid_lines} 行，检测到 {len(groups)} 帧")
+    
+    # 添加帧长度调试信息
+    if groups:
+        lengths = [len(g) for g in groups]
+        logger.info(f"帧长度分布: {lengths}")
+        if len(set(lengths)) > 1:
+            logger.warning(f"检测到不同长度的帧: {set(lengths)}")
+    
     return groups
 
 
 def auto_detect_params(frames: List[List[int]]) -> Dict[str, int]:
     """根据多帧计算出 SPACE_ENC 参数字典。"""
+    if not frames:
+        raise RuntimeError("未检测到任何帧数据，请检查日志文件格式或阈值设置。")
+    
     lengths = [len(f) for f in frames]
     try:
         target_len = statistics.mode(lengths)
@@ -64,13 +85,25 @@ def auto_detect_params(frames: List[List[int]]) -> Dict[str, int]:
     if not candidates:
         raise RuntimeError("未检测到完整帧，请检查日志或阈值设置。")
 
+    # 检查帧长度是否足够
+    if target_len < 4:
+        raise RuntimeError(f"帧长度过短 ({target_len})，无法解析协议参数。需要至少4个值。")
+
     # 对齐并取中位数
     medians = [
         int(statistics.median([frame[i] for frame in candidates]))
         for i in range(target_len)
     ]
     header_pulse, header_space = medians[0], medians[1]
-    pairs = [(medians[i], medians[i+1]) for i in range(2, target_len, 2)]
+    
+    # 确保有足够的数据来形成脉冲-空间对
+    if target_len < 4:
+        raise RuntimeError("帧数据不足，无法解析协议参数")
+    
+    pairs = [(medians[i], medians[i+1]) for i in range(2, target_len-1, 2)]
+    if not pairs:
+        raise RuntimeError("无法从帧数据中提取脉冲-空间对")
+        
     data_pulses = [p for p, _ in pairs]
     bit_spaces = [s for _, s in pairs]
 
@@ -248,8 +281,17 @@ def main() -> None:
     # 自动生成 flags
     flags = "SPACE_ENC|CONST_LENGTH" if args.proto in ("nec", "gree") else "RAW_CODES"
 
-    frames = parse_log(args.log)
+    try:
+        frames = parse_log(args.log)
+    except FileNotFoundError as e:
+        parser.error(str(e))
+    except Exception as e:
+        parser.error(f"解析日志文件时出错: {e}")
+
     logger.info(f"检测到 {len(frames)} 帧数据")
+
+    if not frames:
+        parser.error("未检测到任何帧数据，请检查日志文件格式或阈值设置。")
 
     if args.proto == "nec":
         cfg = auto_detect_params(frames)
