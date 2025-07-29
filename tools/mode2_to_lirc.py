@@ -324,14 +324,18 @@ def main() -> None:
     # 移除帧间隙（大于gap阈值的space值）
     # RAW_CODES 中不应包含帧间隙
     clean_frame = []
-    # 使用更小的阈值来检测帧间隙，因为正常的space值通常小于2000μs
-    frame_gap_threshold = 5000  # 5ms阈值，大于此值的space被认为是帧间隙
+    
+    # 新策略：寻找第一个完整的脉冲序列
+    # 通常一个完整的红外帧应该有合理的长度（比如50-100个值）
+    # 在遇到第一个大间隙(>6000μs)时，检查是否已有足够数据构成完整帧
+    min_frame_length = 20  # 最小帧长度
     
     for i, value in enumerate(first_frame):
-        # 如果是space（奇数索引）且大于帧间隙阈值，停止添加
-        if i % 2 == 1 and value > frame_gap_threshold:
-            logger.info(f"检测到帧间隙 {value}μs，移除此值及之后的数据")
+        # 如果是space（奇数索引）且大于6000μs，且已有足够的数据，停止
+        if (i % 2 == 1 and value > 6000 and len(clean_frame) >= min_frame_length):
+            logger.info(f"检测到大间隙 {value}μs，在位置 {i+1}，已收集 {len(clean_frame)} 个值，停止")
             break
+            
         clean_frame.append(value)
     
     # 验证数据完整性
