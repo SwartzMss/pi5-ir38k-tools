@@ -129,8 +129,10 @@ def auto_detect_params(frames: List[List[int]]) -> Dict[str, int]:
     gap = int(statistics.median(gap_candidates)) if gap_candidates else THRESHOLD_GAP_US
     bits = len(pairs)
 
-    # 对于Gree协议，保持检测到的真实位数
-    logger.info(f"检测到 {bits} 个数据对，保持原始位数")
+    # 对于Gree协议，实际数据位数通常是脉冲对数的一半
+    # 因为包含了重复帧或其他非数据部分
+    actual_bits = bits // 2
+    logger.info(f"检测到 {bits} 个数据对，计算实际数据位数: {actual_bits}")
 
     return {
         "header_pulse": header_pulse,
@@ -142,7 +144,7 @@ def auto_detect_params(frames: List[List[int]]) -> Dict[str, int]:
         "gap": gap,
         "eps": eps,
         "aeps": aeps,
-        "bits": bits,  # 使用真实检测到的位数
+        "bits": actual_bits,  # 使用计算出的实际位数
     }
 
 
