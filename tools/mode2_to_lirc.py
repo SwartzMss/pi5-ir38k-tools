@@ -310,17 +310,21 @@ def main() -> None:
     # 生成 SPACE_ENC 格式配置
     try:
         cfg = auto_detect_params(frames)
-        # 尝试解码第一帧获得按键值
-        code = decode_protocol_nec(clean_frame, cfg, [32, 16, 24])  # 常见的NEC位长度
-        if code is None:
-            # 如果NEC解码失败，使用默认值
-            logger.warning("无法解码按键值，使用默认值 0x40BF")
-            code = 0x40BF
-        elif code == NEC_REPEAT:
-            logger.warning("检测到重复帧，使用默认值 0x40BF")
-            code = 0x40BF
+        # 优先尝试解码Gree空调协议
+        code = decode_protocol_gree(clean_frame, cfg)
+        if code is not None:
+            logger.info(f"成功使用Gree协议解码按键值: 0x{code:X}")
         else:
-            logger.info(f"成功解码按键值: 0x{code:X}")
+            # 如果Gree解码失败，尝试NEC协议
+            code = decode_protocol_nec(clean_frame, cfg, [32, 16, 24])
+            if code is None:
+                logger.warning("Gree和NEC协议解码都失败，使用默认值 0x40BF")
+                code = 0x40BF
+            elif code == NEC_REPEAT:
+                logger.warning("检测到重复帧，使用默认值 0x40BF") 
+                code = 0x40BF
+            else:
+                logger.info(f"使用NEC协议解码按键值: 0x{code:X}")
         
         content = build_conf_space_enc(code, args.key, cfg, args.name)
     except Exception as e:
