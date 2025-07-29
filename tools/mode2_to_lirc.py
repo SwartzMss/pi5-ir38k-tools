@@ -324,9 +324,12 @@ def main() -> None:
     # 移除帧间隙（大于gap阈值的space值）
     # RAW_CODES 中不应包含帧间隙
     clean_frame = []
+    # 使用更小的阈值来检测帧间隙，因为正常的space值通常小于2000μs
+    frame_gap_threshold = 5000  # 5ms阈值，大于此值的space被认为是帧间隙
+    
     for i, value in enumerate(first_frame):
-        # 如果是space（奇数索引）且大于gap阈值，停止添加
-        if i % 2 == 1 and value > THRESHOLD_GAP_US:
+        # 如果是space（奇数索引）且大于帧间隙阈值，停止添加
+        if i % 2 == 1 and value > frame_gap_threshold:
             logger.info(f"检测到帧间隙 {value}μs，移除此值及之后的数据")
             break
         clean_frame.append(value)
