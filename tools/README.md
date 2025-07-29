@@ -14,7 +14,6 @@ python tools/mode2_to_lirc.py --log xxx.log --key KEY_UP \
 - `--key`：按录制顺序指定按键名称，可重复多次，省略时生成 `KEY_1`、`KEY_2` 等默认名。
 - `-o`：输出的 `.conf` 文件路径，默认为 `remote.conf`。
 - `--name`：生成的遥控器名称，默认为 `myremote`。
-- `--flags`：LIRC `remote` 块的 flags，默认为 `SPACE_ENC|CONST_LENGTH`。
 
 录制时建议**轻按后立即松手**，避免 NEC 重复帧干扰。
 
