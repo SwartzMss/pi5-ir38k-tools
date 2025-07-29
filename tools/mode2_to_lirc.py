@@ -129,17 +129,8 @@ def auto_detect_params(frames: List[List[int]]) -> Dict[str, int]:
     gap = int(statistics.median(gap_candidates)) if gap_candidates else THRESHOLD_GAP_US
     bits = len(pairs)
 
-    # 修正bits为常见的红外协议位数
-    if bits > 40:
-        protocol_bits = 32
-    elif bits > 20:
-        protocol_bits = 24
-    elif bits > 12:
-        protocol_bits = 16
-    else:
-        protocol_bits = 8
-    
-    logger.info(f"检测到 {bits} 个数据对，映射为 {protocol_bits} 位协议")
+    # 对于Gree协议，保持检测到的真实位数
+    logger.info(f"检测到 {bits} 个数据对，保持原始位数")
 
     return {
         "header_pulse": header_pulse,
@@ -151,7 +142,7 @@ def auto_detect_params(frames: List[List[int]]) -> Dict[str, int]:
         "gap": gap,
         "eps": eps,
         "aeps": aeps,
-        "bits": protocol_bits,  # 使用修正后的协议位数
+        "bits": bits,  # 使用真实检测到的位数
     }
 
 
