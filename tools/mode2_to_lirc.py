@@ -34,6 +34,7 @@ def parse_log(path: Path) -> List[List[int]]:
     current: List[int] = []
     line_count = 0
     valid_lines = 0
+    timeout_count = 0
     
     with path.open() as f:
         for line in f:
@@ -42,6 +43,15 @@ def parse_log(path: Path) -> List[List[int]]:
             if len(parts) != 2:
                 continue
             typ, raw = parts
+            
+            # 处理 timeout 行作为帧分隔符
+            if typ == "timeout":
+                timeout_count += 1
+                if current:
+                    groups.append(current)
+                    current = []
+                continue
+                
             if typ not in {"pulse", "space"}:
                 continue
             try:
@@ -49,7 +59,7 @@ def parse_log(path: Path) -> List[List[int]]:
                 valid_lines += 1
             except ValueError:
                 continue
-            # 长空间视为帧分隔符
+            # 长空间视为帧分隔符（备用方案）
             if typ == "space" and val > THRESHOLD_GAP_US and current:
                 groups.append(current)
                 current = []
@@ -58,7 +68,7 @@ def parse_log(path: Path) -> List[List[int]]:
     if current:
         groups.append(current)
     
-    logger.info(f"读取了 {line_count} 行，有效数据 {valid_lines} 行，检测到 {len(groups)} 帧")
+    logger.info(f"读取了 {line_count} 行，有效数据 {valid_lines} 行，检测到 {timeout_count} 个timeout，检测到 {len(groups)} 帧")
     
     # 添加帧长度调试信息
     if groups:
@@ -311,20 +321,31 @@ def main() -> None:
         content = build_conf(code, args.key, cfg, args.name, flags)
 
     elif args.proto == "gree":
-        cfg = auto_detect_params(frames)
-        codes: List[int] = []
-        for frame in frames:
-            res = decode_protocol_gree(frame, cfg)
-            if res is None:
-                logger.warning("Gree 解码失败，已跳过")
-            else:
-                codes.append(res)
-        if not codes:
-            parser.error("未解析到任何 Gree 码")
-        if len(set(codes)) > 1:
-            parser.error("检测到多个不同 Gree 码值，请确保只记录一个按键")
-        code = round(statistics.fmean(codes))
-        content = build_conf(code, args.key, cfg, args.name, flags)
+        try:
+            cfg = auto_detect_params(frames)
+            logger.info(f"自动检测的参数: {cfg}")
+            codes: List[int] = []
+            for i, frame in enumerate(frames):
+                logger.info(f"处理第 {i+1} 帧，长度: {len(frame)}")
+                res = decode_protocol_gree(frame, cfg)
+                if res is None:
+                    logger.warning(f"第 {i+1} 帧 Gree 解码失败，已跳过")
+                else:
+                    logger.info(f"第 {i+1} 帧解码成功: 0x{res:X}")
+                    codes.append(res)
+            if not codes:
+                parser.error("未解析到任何 Gree 码")
+            if len(set(codes)) > 1:
+                logger.warning(f"检测到多个不同 Gree 码值: {[hex(c) for c in set(codes)]}")
+                logger.warning("将使用平均值")
+            code = round(statistics.fmean(codes))
+            logger.info(f"最终码值: 0x{code:X}")
+            content = build_conf(code, args.key, cfg, args.name, flags)
+        except Exception as e:
+            logger.error(f"处理 Gree 协议时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            parser.error(f"处理 Gree 协议时出错: {e}")
 
     else:
         avg = average_pulses(frames)
