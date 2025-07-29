@@ -1,17 +1,17 @@
 """将 mode2 日志转换为 LIRC 配置文件。
 
-支持 NEC 协议与 RAW 模式，自动检测所有参数，无需手动设置。
+支持 NEC、RAW 及格力（Gree）空调协议，自动检测所有参数，无需手动设置。
 Requires Python 3.10+
 
 Usage:
   python mode2_to_lirc.py --log key.log --key KEY_UP \
-      --output myremote.conf --name myremote
+      --output myremote.conf --name myremote --proto [nec|raw|gree]
 """
 import argparse
 import logging
 import statistics
 from pathlib import Path
-from typing import Dict, List, Literal, Union
+from typing import Dict, List, Literal, Union, Optional
 
 # Constants
 THRESHOLD_GAP_US = 30000  # 长空间阈值，用于分隔帧
@@ -29,7 +29,7 @@ def parse_log(path: Path) -> List[List[int]]:
     """流式读取 mode2 日志，返回脉冲/空间序列列表（按帧分组）。"""
     groups: List[List[int]] = []
     current: List[int] = []
-    with path.open('r') as f:
+    with path.open() as f:
         for line in f:
             parts = line.strip().split()
             if len(parts) != 2:
@@ -133,6 +133,44 @@ def decode_protocol_nec(
     return value
 
 
+def decode_protocol_gree(
+    pulses: List[int],
+    stats: Optional[Dict[str, int]] = None
+) -> Optional[int]:
+    """Decode Gree 空调协议：返回完整帧（35+32 bit）组合成的整数，失败返回 None。"""
+    # 使用 auto_detect_params 生成 stats 时，stats['bits'] 应等于总 bit 数
+    # 检测帧头
+    if len(pulses) < 4:
+        return None
+    hp, hs = pulses[0], pulses[1]
+    # 基于 auto_detect_params 头部统计范围
+    if stats and not (stats["header_pulse"] * 0.9 <= hp <= stats["header_pulse"] * 1.1 and
+                      stats["header_space"] * 0.9 <= hs <= stats["header_space"] * 1.1):
+        return None
+    # 解析所有位：跳过任何跨块大间隙
+    bits: List[int] = []
+    i = 2
+    gap_th = stats["gap"] if stats else THRESHOLD_GAP_US
+    bit_th = stats["bit_th"] if stats else BIT_THRESHOLD_US
+    while i + 1 < len(pulses):
+        pulse, space = pulses[i], pulses[i+1]
+        # 跨块分隔或尾部
+        if space > gap_th:
+            i += 2
+            continue
+        if pulse < 200:
+            break
+        bits.append(1 if space > bit_th else 0)
+        i += 2
+    if not bits:
+        return None
+    # 合并所有位到单个整数
+    value = 0
+    for b in bits:
+        value = (value << 1) | b
+    return value
+
+
 def build_conf(
     code: int,
     name: str,
@@ -204,39 +242,54 @@ def main() -> None:
     parser.add_argument("--key", default="KEY_1", help="按键名称，默认 KEY_1")
     parser.add_argument("-o", "--output", type=Path, default=Path("remote.conf"), help="输出 conf 文件路径")
     parser.add_argument("--name", default="myremote", help="遥控器名称，默认 myremote")
-    parser.add_argument("--proto", choices=["nec", "raw"], default="nec", help="协议类型：nec 或 raw，默认 nec")
+    parser.add_argument("--proto", choices=["nec", "raw", "gree"], default="nec", help="协议类型：nec、raw 或 gree，默认 nec")
     args = parser.parse_args()
 
     # 自动生成 flags
-    flags = "SPACE_ENC|CONST_LENGTH" if args.proto == "nec" else "RAW_CODES"
+    flags = "SPACE_ENC|CONST_LENGTH" if args.proto in ("nec", "gree") else "RAW_CODES"
 
     frames = parse_log(args.log)
-    logger.info(f"Detected {len(frames)} frames")
+    logger.info(f"检测到 {len(frames)} 帧数据")
 
     if args.proto == "nec":
         cfg = auto_detect_params(frames)
-        # 仅支持自动检测位宽
         lengths = [cfg["bits"]]
         codes: List[int] = []
         for frame in frames:
             res = decode_protocol_nec(frame, cfg, lengths)
             if res is None:
-                logger.warning("帧解码失败，已跳过")
+                logger.warning("NEC 解码失败，已跳过")
             elif res != NEC_REPEAT:
                 codes.append(res)
         if not codes:
             parser.error("未解析到任何 NEC 码")
         if len(set(codes)) > 1:
-            parser.error("检测到多个不同码值，请确保只记录一个按键")
+            parser.error("检测到多个不同 NEC 码值，请确保只记录一个按键")
         code = round(statistics.fmean(codes))
         content = build_conf(code, args.key, cfg, args.name, flags)
+
+    elif args.proto == "gree":
+        cfg = auto_detect_params(frames)
+        codes: List[int] = []
+        for frame in frames:
+            res = decode_protocol_gree(frame, cfg)
+            if res is None:
+                logger.warning("Gree 解码失败，已跳过")
+            else:
+                codes.append(res)
+        if not codes:
+            parser.error("未解析到任何 Gree 码")
+        if len(set(codes)) > 1:
+            parser.error("检测到多个不同 Gree 码值，请确保只记录一个按键")
+        code = round(statistics.fmean(codes))
+        content = build_conf(code, args.key, cfg, args.name, flags)
+
     else:
         avg = average_pulses(frames)
         content = build_conf_raw(avg, args.key, args.name, flags)
 
     args.output.write_text(content)
     logger.info(f"配置已写入 {args.output}")
-
 
 if __name__ == "__main__":
     main()
