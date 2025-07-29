@@ -317,18 +317,29 @@ def main() -> None:
     if not frames:
         parser.error("未检测到任何帧数据，请检查日志文件格式或阈值设置。")
 
-    # 对所有帧取平均，生成 RAW_CODES 格式
-    avg = average_pulses(frames)
+    # 选择第一个完整帧，而不是多帧平均
+    first_frame = frames[0]
+    logger.info(f"使用第一帧数据，长度: {len(first_frame)} 个值")
+    
+    # 移除帧间隙（大于gap阈值的space值）
+    # RAW_CODES 中不应包含帧间隙
+    clean_frame = []
+    for i, value in enumerate(first_frame):
+        # 如果是space（奇数索引）且大于gap阈值，停止添加
+        if i % 2 == 1 and value > THRESHOLD_GAP_US:
+            logger.info(f"检测到帧间隙 {value}μs，移除此值及之后的数据")
+            break
+        clean_frame.append(value)
     
     # 验证数据完整性
-    if len(avg) < 4:
-        parser.error(f"平均脉冲数据过短 ({len(avg)} 个值)，无法生成有效的红外信号")
+    if len(clean_frame) < 4:
+        parser.error(f"清理后的脉冲数据过短 ({len(clean_frame)} 个值)，无法生成有效的红外信号")
     
-    logger.info(f"平均脉冲数据长度: {len(avg)} 个值")
-    if len(avg) % 2 != 0:
+    logger.info(f"清理后脉冲数据长度: {len(clean_frame)} 个值")
+    if len(clean_frame) % 2 != 0:
         logger.warning("脉冲数据个数为奇数，将自动修正为偶数个")
     
-    content = build_conf_raw(avg, args.key, args.name, flags)
+    content = build_conf_raw(clean_frame, args.key, args.name, flags)
 
     args.output.write_text(content)
     logger.info(f"RAW_CODES 配置已写入 {args.output}")
