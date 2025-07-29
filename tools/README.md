@@ -17,7 +17,6 @@
 ```bash
 git clone https://github.com/SwartzMss/pi5-ir38k-tools.git
 cd pi5-ir38k-tools/tools
-pip install -r requirements.txt  # 如需额外依赖，可在此添加
 ```
 
 ## 使用示例
