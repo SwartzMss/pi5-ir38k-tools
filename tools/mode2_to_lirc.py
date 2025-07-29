@@ -276,19 +276,14 @@ def build_conf_raw(
         "  frequency 38000",
         "",
         "  begin raw_codes",
+        f"    name {key}",
     ]
     
-    # 将脉冲数据分行，第一行包含按键名
+    # 将脉冲数据分行，每行最多16个数值
     pulse_strs = [str(x) for x in pulses]
-    
-    # 第一行：按键名 + 前16个数值
-    first_line_data = pulse_strs[:16]
-    lines.append(f"    {key:<12} " + " ".join(first_line_data))
-    
-    # 后续行：每行16个数值，如果还有数据的话
-    for i in range(16, len(pulse_strs), 16):
+    for i in range(0, len(pulse_strs), 16):
         line_data = pulse_strs[i:i+16]
-        lines.append("                 " + " ".join(line_data))
+        lines.append("      " + " ".join(line_data))
     
     lines.extend([
         "  end raw_codes",
