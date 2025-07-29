@@ -244,7 +244,7 @@ def build_conf_space_enc(
     lines = [
         "begin remote",
         f"  name        {remote}",
-        f"  flags       SPACE_ENC|CONST_LENGTH",
+        f"  flags       SPACE_ENC",
         f"  bits        {cfg['bits']}",
         f"  eps         {cfg['eps']}",
         f"  aeps        {cfg['aeps']}",
