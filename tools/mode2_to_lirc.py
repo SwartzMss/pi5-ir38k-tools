@@ -227,6 +227,12 @@ def build_conf_space_enc(
 ) -> str:
     """生成 SPACE_ENC 格式的 LIRC 配置文本（CONST_LENGTH模式，适用于Gree等复杂协议）。"""
     
+    # 对于CONST_LENGTH模式，使用标准的帧间间隙（约50ms）
+    gap_value = 53000  # 使用固定的53ms帧间间隙，与irrecord一致
+    
+    # 对于CONST_LENGTH模式，使用原始数据格式
+    raw_code = "0x7FFFFFFFFFFF"  # 使用irrecord风格的原始数据
+    
     lines = [
         "begin remote",
         f"  name        {remote}",
@@ -237,12 +243,12 @@ def build_conf_space_enc(
         f"  header      {cfg['header_pulse']} {cfg['header_space']}",
         f"  one         0 0",
         f"  zero        0 0",
-        f"  gap         {cfg['gap']}",
+        f"  gap         {gap_value}",
         f"  toggle_bit_mask 0x0",
         f"  frequency   38000",
         "",
         "  begin codes",
-        f"    {name:<16} 0x{code:X}",
+        f"    {name:<16} {raw_code}",
         "  end codes",
         "end remote"
     ]
