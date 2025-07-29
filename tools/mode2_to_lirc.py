@@ -21,7 +21,9 @@ from typing import Dict, List
 
 
 THRESHOLD_GAP_US = 30000  # consider a space longer than this as key separator
-BIT_THRESHOLD_US = 1000   # spaces larger than this treated as logical 1
+BIT_THRESHOLD_US = 1000   # default logic-1 threshold, may be adapted
+
+REPEAT_FRAME = -1  # special return for NEC repeat code
 
 
 def parse_log(path: Path) -> List[List[int]]:
@@ -50,14 +52,74 @@ def parse_log(path: Path) -> List[List[int]]:
     return groups
 
 
-def decode_protocol_nec(pulses: List[int]) -> int | None:
-    """Decode a NEC infrared sequence into an integer code."""
-    if len(pulses) < 4:
+def calibrate_nec(groups: List[List[int]]) -> dict:
+    """Calculate dynamic thresholds from captured frames."""
+    headers_pulse: List[int] = []
+    headers_space: List[int] = []
+    bit_spaces: List[int] = []
+    for g in groups:
+        if len(g) < 10:
+            # short frame, likely repeat or noise
+            continue
+        headers_pulse.append(g[0])
+        headers_space.append(g[1])
+        for i in range(3, len(g), 2):
+            bit_spaces.append(g[i])
+
+    if not headers_pulse or not headers_space or not bit_spaces:
+        return {
+            "header_range": (8000, 10000),
+            "space_range": (4000, 5000),
+            "bit_threshold": BIT_THRESHOLD_US,
+            "header_pulse": 9000,
+            "header_space": 4500,
+            "zero_space": 560,
+            "one_space": 1690,
+        }
+
+    header_pulse_med = statistics.median(headers_pulse)
+    header_space_med = statistics.median(headers_space)
+
+    bit_spaces.sort()
+    mid = len(bit_spaces) // 2
+    zero_med = statistics.median(bit_spaces[:mid]) if mid > 0 else 560
+    one_med = statistics.median(bit_spaces[mid:]) if mid > 0 else 1690
+    bit_threshold = (zero_med + one_med) / 2
+
+    return {
+        "header_range": (header_pulse_med * 0.9, header_pulse_med * 1.1),
+        "space_range": (header_space_med * 0.9, header_space_med * 1.1),
+        "bit_threshold": bit_threshold,
+        "header_pulse": header_pulse_med,
+        "header_space": header_space_med,
+        "zero_space": zero_med,
+        "one_space": one_med,
+    }
+
+
+def decode_protocol_nec(
+    pulses: List[int],
+    head_range: tuple[float, float],
+    space_range: tuple[float, float],
+    bit_threshold: float,
+    supported_lengths: set[int],
+) -> int | None:
+    """Decode a NEC infrared sequence into an integer code.
+
+    Returns ``REPEAT_FRAME`` if a repeat code is detected.
+    """
+    if len(pulses) < 3:
         return None
-    if pulses[0] < 8000 or pulses[0] > 10000:
+
+    # repeat frame: 9ms + 2.25ms + 560us
+    if 2000 <= pulses[1] <= 2500 and len(pulses) <= 4:
+        return REPEAT_FRAME
+
+    if not (head_range[0] <= pulses[0] <= head_range[1]):
         return None
-    if pulses[1] < 4000 or pulses[1] > 5000:
+    if not (space_range[0] <= pulses[1] <= space_range[1]):
         return None
+
     bits = []
     i = 2
     while i + 1 < len(pulses):
@@ -65,13 +127,12 @@ def decode_protocol_nec(pulses: List[int]) -> int | None:
         space = pulses[i + 1]
         if pulse < 200:
             break
-        if space > BIT_THRESHOLD_US:
-            bits.append(1)
-        else:
-            bits.append(0)
+        bits.append(1 if space > bit_threshold else 0)
         i += 2
-    if len(bits) not in {16, 32}:
+
+    if len(bits) not in supported_lengths:
         return None
+
     value = 0
     for b in bits:
         value = (value << 1) | b
@@ -140,15 +201,39 @@ def main() -> None:
         default="SPACE_ENC|CONST_LENGTH",
         help="LIRC remote flags",
     )
+    parser.add_argument(
+        "--bits",
+        default="16,32",
+        help="允许的位数，例如 32,40,48",
+    )
     args = parser.parse_args()
 
     groups = parse_log(args.log)
     print(f"检测到 {len(groups)} 组数据")
 
+    calib = calibrate_nec(groups)
+    print(
+        "动态阈值:",
+        f"header {calib['header_range'][0]:.0f}-{calib['header_range'][1]:.0f} ",
+        f"space {calib['space_range'][0]:.0f}-{calib['space_range'][1]:.0f} ",
+        f"bit {calib['bit_threshold']:.0f}",
+    )
+
+    supported_lengths = {int(b) for b in args.bits.split(',') if b.strip()}
+
     codes_by_value: Dict[int, List[int]] = {}
     order: List[int] = []
     for grp in groups:
-        code = decode_protocol_nec(grp)
+        code = decode_protocol_nec(
+            grp,
+            calib["header_range"],
+            calib["space_range"],
+            calib["bit_threshold"],
+            supported_lengths,
+        )
+        if code == REPEAT_FRAME:
+            print("提示：检测到重复帧，已忽略")
+            continue
         if code is None:
             print("警告：有一组数据解码失败，已跳过")
             continue
@@ -171,6 +256,13 @@ def main() -> None:
     conf = build_conf(codes, key_names, args.name, args.flags)
     args.output.write_text(conf)
     print(f"已写入 {args.output}")
+
+    print("SPACE_ENC 参数参考：")
+    print(f"  header_pulse = {int(calib['header_pulse'])}")
+    print(f"  header_space = {int(calib['header_space'])}")
+    print(f"  zero_space   = {int(calib['zero_space'])}")
+    print(f"  one_space    = {int(calib['one_space'])}")
+    print(f"  gap          = {THRESHOLD_GAP_US}")
 
 
 if __name__ == "__main__":
