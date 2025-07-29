@@ -225,12 +225,18 @@ def build_conf_space_enc(
     cfg: Dict[str, int],
     remote: str
 ) -> str:
-    """生成 SPACE_ENC 格式的 LIRC 配置文本（CONST_LENGTH模式，适用于Gree等复杂协议）。"""
+    """生成 SPACE_ENC 格式的 LIRC 配置文本（CONST_LENGTH模式，适用于Gree等复杂协议）。
+    
+    重要发现：在CONST_LENGTH模式下，LIRC不进行协议解析，而是直接使用原始数据。
+    因此必须使用类似0x7FFFFFFFFFFF的原始数据格式，而不是解码后的值如0x13F。
+    这解释了为什么irrecord生成的配置能工作：它使用的是原始数据格式。
+    """
     
     # 对于CONST_LENGTH模式，使用标准的帧间间隙（约50ms）
     gap_value = 53000  # 使用固定的53ms帧间间隙，与irrecord一致
     
-    # 对于CONST_LENGTH模式，使用原始数据格式
+    # 关键：对于CONST_LENGTH模式，必须使用原始数据格式
+    # 不能使用协议解码值，LIRC在此模式下不进行脉冲解析
     raw_code = "0x7FFFFFFFFFFF"  # 使用irrecord风格的原始数据
     
     lines = [
