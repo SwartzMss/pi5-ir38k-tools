@@ -88,12 +88,17 @@ def decode_protocol_sony(pulses: List[int]) -> int | None:
     return None
 
 
-def build_conf(codes: List[int], names: List[str], remote: str = "myremote") -> str:
+def build_conf(
+    codes: List[int],
+    names: List[str],
+    remote: str = "myremote",
+    flags: str = "SPACE_ENC|CONST_LENGTH",
+) -> str:
     """Create a minimal LIRC configuration in ENC (encoded) format."""
     lines = [
         "begin remote",
         f"  name  {remote}",
-        "  flags  SPACE_ENC|CONST_LENGTH",
+        f"  flags  {flags}",
         "  eps            30",
         "  aeps           100",
         f"  gap           {THRESHOLD_GAP_US}",
@@ -102,7 +107,8 @@ def build_conf(codes: List[int], names: List[str], remote: str = "myremote") -> 
         "  begin codes",
     ]
     for name, code in zip(names, codes):
-        lines.append(f"    {name:16} 0x{code:X}")
+        code_str = f"0x{code:X}"
+        lines.append(f"    {name:16} {code_str}")
     lines.append("  end codes")
     lines.append("end remote")
     return "\n".join(lines)
@@ -129,6 +135,11 @@ def main() -> None:
         help="生成的 conf 文件路径",
     )
     parser.add_argument("--name", default="myremote", help="遥控器名称")
+    parser.add_argument(
+        "--flags",
+        default="SPACE_ENC|CONST_LENGTH",
+        help="LIRC remote flags",
+    )
     args = parser.parse_args()
 
     groups = parse_log(args.log)
@@ -157,7 +168,7 @@ def main() -> None:
     codes: List[int] = [round(statistics.fmean(codes_by_value[order[0]]))]
     key_names = [key_name]
 
-    conf = build_conf(codes, key_names, args.name)
+    conf = build_conf(codes, key_names, args.name, args.flags)
     args.output.write_text(conf)
     print(f"已写入 {args.output}")
 
