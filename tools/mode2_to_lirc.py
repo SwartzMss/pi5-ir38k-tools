@@ -129,6 +129,18 @@ def auto_detect_params(frames: List[List[int]]) -> Dict[str, int]:
     gap = int(statistics.median(gap_candidates)) if gap_candidates else THRESHOLD_GAP_US
     bits = len(pairs)
 
+    # 修正bits为常见的红外协议位数
+    if bits > 40:
+        protocol_bits = 32
+    elif bits > 20:
+        protocol_bits = 24
+    elif bits > 12:
+        protocol_bits = 16
+    else:
+        protocol_bits = 8
+    
+    logger.info(f"检测到 {bits} 个数据对，映射为 {protocol_bits} 位协议")
+
     return {
         "header_pulse": header_pulse,
         "header_space": header_space,
@@ -139,7 +151,7 @@ def auto_detect_params(frames: List[List[int]]) -> Dict[str, int]:
         "gap": gap,
         "eps": eps,
         "aeps": aeps,
-        "bits": bits,
+        "bits": protocol_bits,  # 使用修正后的协议位数
     }
 
 
@@ -243,13 +255,33 @@ def build_conf(
     return "\n".join(lines)
 
 
-def average_pulses(frames: List[List[int]]) -> List[int]:
-    """按索引对齐帧并取平均值。"""
-    max_len = max(len(f) for f in frames)
-    return [
-        round(statistics.fmean([f[i] for f in frames if i < len(f)]))
-        for i in range(max_len)
+def build_conf_space_enc(
+    code: int,
+    name: str,
+    cfg: Dict[str, int],
+    remote: str
+) -> str:
+    """生成 SPACE_ENC 格式的 LIRC 配置文本（推荐格式）。"""
+    lines = [
+        "begin remote",
+        f"  name        {remote}",
+        f"  flags       SPACE_ENC|CONST_LENGTH",
+        f"  bits        {cfg['bits']}",
+        f"  eps         {cfg['eps']}",
+        f"  aeps        {cfg['aeps']}",
+        f"  header      {cfg['header_pulse']} {cfg['header_space']}",
+        f"  one         {cfg['bit_pulse']} {cfg['one_space']}",
+        f"  zero        {cfg['bit_pulse']} {cfg['zero_space']}",
+        f"  ptrail      {cfg['bit_pulse']}",
+        f"  gap         {cfg['gap']}",
+        "  frequency   38000",
+        "",
+        "  begin codes",
+        f"    {name:<16} 0x{code:X}",
+        "  end codes",
+        "end remote"
     ]
+    return "\n".join(lines)
 
 
 def build_conf_raw(
@@ -292,18 +324,33 @@ def build_conf_raw(
     return "\n".join(lines)
 
 
+def average_pulses(frames: List[List[int]]) -> List[int]:
+    """按索引对齐帧并取平均值。"""
+    max_len = max(len(f) for f in frames)
+    return [
+        round(statistics.fmean([f[i] for f in frames if i < len(f)]))
+        for i in range(max_len)
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="将 mode2 日志转换为 LIRC RAW_CODES 配置文件"
+        description="将 mode2 日志转换为 LIRC 配置文件",
+        epilog="推荐使用 --format space_enc，兼容性更好"
     )
     parser.add_argument("--log", type=Path, required=True, help="mode2 输出的日志文件路径")
     parser.add_argument("--key", default="KEY_1", help="按键名称，默认 KEY_1")
     parser.add_argument("-o", "--output", type=Path, default=Path("remote.conf"), help="输出 conf 文件路径")
     parser.add_argument("--name", default="myremote", help="遥控器名称，默认 myremote")
+    parser.add_argument("--format", choices=["raw", "space_enc"], default="space_enc", 
+                       help="输出配置文件格式: raw=RAW_CODES (原始脉冲), space_enc=SPACE_ENC (兼容性更好，推荐)")
     args = parser.parse_args()
 
-    # 固定使用 RAW_CODES 格式
-    flags = "RAW_CODES"
+    # 根据格式设置flags
+    if args.format == "raw":
+        flags = "RAW_CODES"
+    else:
+        flags = None  # SPACE_ENC不需要这个变量
 
     try:
         frames = parse_log(args.log)
@@ -346,10 +393,34 @@ def main() -> None:
     if len(clean_frame) % 2 != 0:
         logger.warning("脉冲数据个数为奇数，将自动修正为偶数个")
     
-    content = build_conf_raw(clean_frame, args.key, args.name, flags)
+    if args.format == "raw":
+        content = build_conf_raw(clean_frame, args.key, args.name, flags)
+    elif args.format == "space_enc":
+        # 使用所有帧来计算参数并解码第一帧
+        try:
+            cfg = auto_detect_params(frames)
+            # 尝试解码第一帧获得按键值
+            code = decode_protocol_nec(clean_frame, cfg, [32, 16, 24])  # 常见的NEC位长度
+            if code is None:
+                # 如果NEC解码失败，尝试其他解码方式或使用默认值
+                logger.warning("无法解码按键值，使用默认值 0x40BF")
+                code = 0x40BF
+            elif code == NEC_REPEAT:
+                logger.warning("检测到重复帧，使用默认值 0x40BF")
+                code = 0x40BF
+            else:
+                logger.info(f"成功解码按键值: 0x{code:X}")
+            
+            content = build_conf_space_enc(code, args.key, cfg, args.name)
+        except Exception as e:
+            logger.error(f"SPACE_ENC 格式生成失败: {e}")
+            logger.info("回退到RAW_CODES格式")
+            content = build_conf_raw(clean_frame, args.key, args.name, "RAW_CODES")
+    else:
+        parser.error(f"不支持的格式: {args.format}")
 
     args.output.write_text(content)
-    logger.info(f"RAW_CODES 配置已写入 {args.output}")
+    logger.info(f"配置已写入 {args.output}")
 
 if __name__ == "__main__":
     main()

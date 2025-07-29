@@ -2,9 +2,10 @@
 
 该脚本用于将 `mode2` 命令输出的日志转换为 LIRC 配置文件。
 
-- **RAW\_CODES** 模式（直接输出脉冲时序）
+- **SPACE\_ENC** 模式（推荐，兼容性最好）
+- **RAW\_CODES** 模式（原始脉冲时序，备用选项）
 
-无需手动设置时序参数，脚本会自动对多帧数据取平均值，生成稳定的 RAW\_CODES 格式配置。
+脚本会自动分析红外信号的协议参数，生成可直接使用的 LIRC 配置文件。
 
 ## 依赖
 
@@ -20,14 +21,20 @@ cd pi5-ir38k-tools/tools
 ## 使用示例
 
 ```bash
+# 推荐：生成 SPACE_ENC 格式（默认）
 python mode2_to_lirc.py \
-  --log xxx.log \
+  --log power.log \
   --key KEY_POWER \
   --name myremote \
   --output myremote.conf
-```
 
-- 直接生成 RAW\_CODES 格式配置。
+# 备用：生成 RAW_CODES 格式
+python mode2_to_lirc.py \
+  --log power.log \
+  --key KEY_POWER \
+  --format raw \
+  --output myremote.conf
+```
 
 ## 参数说明
 
@@ -37,81 +44,74 @@ python mode2_to_lirc.py \
 | `--key`    | LIRC 配置中的键名               | `KEY_1`       |
 | `--name`   | 遥控器名称                     | `myremote`    |
 | `--output` | 生成的 `.conf` 文件路径          | `remote.conf` |
+| `--format` | 输出格式：`space_enc`(推荐) 或 `raw` | `space_enc`   |
 
 ## 工作流程
 
 1. **录制**：\
-   运行 `mode2 > logfile`，连续多次按下同一按键，确保捕获完整帧数据。
+   运行 `mode2 > power.log`，按下遥控器按键，确保捕获完整信号。
 2. **转换**：\
-   脚本自动对所有帧的时序数组分别按索引求平均值，输出 RAW\_CODES 格式。
-3. **输出**：\
-   生成的 `.conf` 即可直接在 LIRC 中使用。
+   脚本自动分析信号协议，提取时序参数，生成配置文件。
+3. **部署**：\
+   将生成的 `.conf` 文件复制到 `/etc/lirc/lircd.conf.d/` 并重启 lircd 服务。
 
-## 为什么选择 RAW\_CODES 模式？
+## 格式说明
 
-- **兼容性**：不受 64 位限制，支持任何复杂协议
-- **完整性**：保留原始时序信息，无数据丢失
-- **稳定性**：对多帧取平均，消除噪音影响
-- **通用性**：适用于所有红外遥控器，包括空调等复杂设备
+### SPACE_ENC 格式（推荐）
+
+- ✅ **兼容性好**：支持所有 LIRC 版本
+- ✅ **自动解析**：智能检测协议参数（header, one, zero 等）
+- ✅ **标准格式**：符合大多数红外协议标准
+- ✅ **易扩展**：可轻松添加多个按键
+
+示例输出：
+```
+begin remote
+  name        myremote
+  flags       SPACE_ENC|CONST_LENGTH
+  bits        32
+  eps         30
+  aeps        100
+  header      1231 448
+  one         420 1267
+  zero        420 450
+  ptrail      420
+  gap         7039
+  frequency   38000
+
+  begin codes
+    KEY_POWER    0x40BF
+  end codes
+end remote
+```
+
+### RAW_CODES 格式（备用）
+
+- ⚠️ **兼容性限制**：某些 LIRC 版本可能不支持
+- ✅ **保真度高**：保留原始脉冲时序
+- ⚠️ **单按键限制**：每次只能生成一个按键
 
 ## 注意事项
 
-- 仅支持一次解析一个按键。如日志包含多种按键，请分别录制。
-- 建议录制 3-5 次按键操作，脚本会自动计算平均时序。
-- 建议录制时**轻按后立即松手**，避免重复帧干扰。
+- 建议录制时**轻按后立即松手**，避免重复帧干扰
+- 推荐使用 SPACE_ENC 格式，兼容性最好
+- 如果信号解析失败，脚本会自动回退到 RAW_CODES 格式
 
-## RAW_CODES 格式问题与解决方案
-
-### 常见问题
-
-在使用生成的 RAW_CODES 配置文件时，可能遇到以下 LIRC 错误：
-
-```
-Error: bad signal length
-Error: error in configfile line XX
-Warning: config file contains no valid remote control definition
-```
-
-### 问题原因
-
-1. **多帧混合**：RAW_CODES 中每个按键只能包含单帧数据，不能包含多次按键的数据
-2. **包含帧间隙**：7000+μs 的大间隙值是帧分隔符，不应出现在 RAW_CODES 数据中
-3. **格式不正确**：缩进和语法必须严格符合 LIRC 官方标准
-4. **数据长度异常**：过长或过短的数据可能导致解析失败
-
-### 解决方案
-
-脚本已实现以下修复机制：
-
-- ✅ **单帧提取**：只输出第一个完整帧的数据
-- ✅ **间隙过滤**：智能检测并移除大于 6000μs 的间隙值
-- ✅ **格式标准化**：严格按照 LIRC 官方文档格式输出
-- ✅ **数据验证**：确保偶数个值（pulse-space 对）
-
-### 测试配置文件
-
-目录中提供了多个测试配置文件用于验证 LIRC 兼容性：
-
-- `test1_minimal.conf` - 极简格式（8个值）
-- `test2_standard.conf` - 标准 NEC 协议格式
-- `test3_medium.conf` - 中等长度（24个值）
-- `test4_different.conf` - 不同缩进格式测试
-- `test5_space_enc.conf` - 传统 SPACE_ENC 格式对比
-
-### 测试方法
+## 部署配置
 
 ```bash
-# 复制测试配置到 LIRC 目录
-sudo cp test1_minimal.conf /etc/lirc/lircd.conf.d/
+# 复制配置文件到 LIRC 目录
+sudo cp myremote.conf /etc/lirc/lircd.conf.d/
 
 # 重启 LIRC 服务
 sudo systemctl restart lircd
 
 # 检查状态
 sudo systemctl status lircd
-```
 
-如果所有 RAW_CODES 格式都失败，建议使用 `test5_space_enc.conf` 中的传统格式。
+# 测试按键
+irw
+```
 
 ---
 
