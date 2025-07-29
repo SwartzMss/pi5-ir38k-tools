@@ -91,6 +91,57 @@ def compute_nec_stats(groups: List[List[int]]) -> Dict[str, int]:
     }
 
 
+def auto_detect_params(frames: List[List[int]]) -> Dict[str, int]:
+    """Automatically derive optimal SPACE_ENC parameters from frames."""
+    lengths = [len(f) for f in frames]
+    try:
+        target_len = statistics.mode(lengths)
+    except statistics.StatisticsError:
+        target_len = max(set(lengths), key=lengths.count)
+    valid = [f for f in frames if len(f) == target_len]
+    if not valid:
+        raise RuntimeError("没有检测到完整帧，请检查 --gap 阈值是否合适")
+
+    L = min(len(f) for f in valid)
+    aligned = [f[:L] for f in valid]
+    medians = [int(statistics.median([frame[i] for frame in aligned])) for i in range(L)]
+
+    header_pulse, header_space = medians[0], medians[1]
+
+    pairs = [(medians[i], medians[i + 1]) for i in range(2, L, 2)]
+    data_pulses = [p for p, _ in pairs]
+    bit_spaces = [s for _, s in pairs]
+
+    sorted_spaces = sorted(bit_spaces)
+    mid = len(sorted_spaces) // 2
+    zero_space = int(statistics.median(sorted_spaces[:mid])) if mid else 0
+    one_space = int(statistics.median(sorted_spaces[mid:])) if sorted_spaces[mid:] else 0
+
+    bit_th = (zero_space + one_space) // 2 if zero_space and one_space else BIT_THRESHOLD_US
+
+    all_spaces = [v for f in frames for typ, v in zip(['pulse', 'space'] * (len(f) // 2), f) if typ == 'space']
+    gap_candidates = [s for s in all_spaces if s > one_space * 1.5]
+    gap = int(statistics.median(gap_candidates)) if gap_candidates else THRESHOLD_GAP_US
+
+    data_pulse_med = int(statistics.median(data_pulses)) if data_pulses else 560
+    eps = max(5, int(data_pulse_med * 0.1))
+    aeps = max(20, int(header_space * 0.1))
+    bits = len(pairs)
+
+    return {
+        "header_pulse": header_pulse,
+        "header_space": header_space,
+        "zero_space": zero_space,
+        "one_space": one_space,
+        "bit_th": bit_th,
+        "gap": gap,
+        "eps": eps,
+        "aeps": aeps,
+        "bits": bits,
+        "bit_pulse": data_pulse_med,
+    }
+
+
 def decode_protocol_nec(
     pulses: List[int],
     stats: Optional[Dict[str, int]] = None,
@@ -152,18 +203,31 @@ def decode_protocol_sony(pulses: List[int]) -> int | None:
 def build_conf(
     codes: List[int],
     names: List[str],
-    remote: str = "myremote",
-    flags: str = "SPACE_ENC|CONST_LENGTH",
+    remote: str,
+    flags: str,
+    *,
+    header: tuple[int, int],
+    zero: int,
+    one: int,
+    gap: int,
+    eps: int,
+    aeps: int,
+    bits: int,
+    bit_th: int,
 ) -> str:
-    """Create a minimal LIRC configuration in ENC (encoded) format."""
+    """Create a minimal LIRC configuration in SPACE_ENC format."""
     lines = [
         "begin remote",
-        f"  name  {remote}",
-        f"  flags  {flags}",
-        "  eps            30",
-        "  aeps           100",
-        f"  gap           {THRESHOLD_GAP_US}",
-        "  frequency    38000",
+        f"  name        {remote}",
+        f"  flags       {flags}",
+        f"  bits        {bits}",
+        f"  eps         {eps}",
+        f"  aeps        {aeps}",
+        f"  gap         {gap}",
+        f"  header      {header[0]}   {header[1]}",
+        f"  zero        0   {zero}",
+        f"  one         0   {one}",
+        "  frequency   38000",
         "",
         "  begin codes",
     ]
@@ -252,15 +316,18 @@ def main() -> None:
     )
     parser.add_argument(
         "--bits",
-        default="16,32",
-        help="允许的 NEC 数据位长度，逗号分隔，如 32,40,48",
+        help="允许的 NEC 数据位长度，逗号分隔，默认为自动检测",
     )
     parser.add_argument(
         "--flags",
-        default="SPACE_ENC|CONST_LENGTH",
-        help="LIRC remote flags",
+        help="LIRC remote flags，未指定时根据协议自动设置",
     )
     args = parser.parse_args()
+
+    if args.flags is None:
+        args.flags = (
+            "SPACE_ENC|CONST_LENGTH" if args.proto == "nec" else "RAW_CODES"
+        )
 
     groups = parse_log(args.log)
     print(f"检测到 {len(groups)} 组数据")
@@ -268,8 +335,23 @@ def main() -> None:
     key_name = args.key if args.key else "KEY_1"
 
     if args.proto == "nec":
-        supported_lengths = [int(x) for x in args.bits.split(",") if x.strip()]
-        stats = compute_nec_stats(groups)
+        params = auto_detect_params(groups)
+        stats = {
+            "header_pulse": params["header_pulse"],
+            "header_space": params["header_space"],
+            "bit_pulse": params["bit_pulse"],
+            "zero_space": params["zero_space"],
+            "one_space": params["one_space"],
+            "header_pulse_min": int(params["header_pulse"] * 0.9),
+            "header_pulse_max": int(params["header_pulse"] * 1.1),
+            "header_space_min": int(params["header_space"] * 0.9),
+            "header_space_max": int(params["header_space"] * 1.1),
+            "bit_threshold": params["bit_th"],
+        }
+        if args.bits:
+            supported_lengths = [int(x) for x in args.bits.split(",") if x.strip()]
+        else:
+            supported_lengths = [params["bits"]]
         codes_by_value: Dict[int, List[int]] = {}
         order: List[int] = []
         for grp in groups:
@@ -291,8 +373,20 @@ def main() -> None:
 
         codes: List[int] = [round(statistics.fmean(codes_by_value[order[0]]))]
         key_names = [key_name]
-        conf = build_conf(codes, key_names, args.name, args.flags)
-        print("\n" + build_space_enc_template(stats))
+        conf = build_conf(
+            codes,
+            key_names,
+            args.name,
+            args.flags,
+            header=(params["header_pulse"], params["header_space"]),
+            zero=params["zero_space"],
+            one=params["one_space"],
+            gap=params["gap"],
+            eps=params["eps"],
+            aeps=params["aeps"],
+            bits=params["bits"],
+            bit_th=params["bit_th"],
+        )
     else:
         pulses = average_pulses(groups)
         conf = build_conf_raw(pulses, key_name, args.name, args.flags)

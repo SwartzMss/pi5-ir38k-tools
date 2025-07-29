@@ -16,6 +16,11 @@ python tools/mode2_to_lirc.py --log xxx.log --key KEY_UP \
 - `-o`：输出的 `.conf` 文件路径，默认为 `remote.conf`。
 - `--name`：生成的遥控器名称，默认为 `myremote`。
 - `--proto`：协议类型，可选 `nec` 或 `raw`，默认为 `nec`。
+- `--bits`：NEC 协议允许的数据位长度，默认自动根据日志推测。
+- `--flags`：生成配置时的 LIRC flags，默认为依据协议自动设置。
+
+脚本会自动统计 header、zero/one、gap 等时序参数，并给出适合 `eps`、`aeps`
+和 `bits` 的值，一般无需手动填写这些专业选项。
 
 如未解析到有效码值或检测到多个不同码值，脚本会报错并显示帮助信息。
 
