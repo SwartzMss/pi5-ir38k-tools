@@ -276,14 +276,14 @@ def build_conf_raw(
         "  frequency 38000",
         "",
         "  begin raw_codes",
-        f"    name {key}",
+        f"  name {key}",
     ]
     
     # 将脉冲数据分行，每行最多16个数值
     pulse_strs = [str(x) for x in pulses]
     for i in range(0, len(pulse_strs), 16):
         line_data = pulse_strs[i:i+16]
-        lines.append("      " + " ".join(line_data))
+        lines.append("    " + " ".join(line_data))
     
     lines.extend([
         "  end raw_codes",
