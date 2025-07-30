@@ -152,7 +152,7 @@ def decode_protocol_nec(
     pulses: List[int],
     stats: Dict[str, int],
     supported_lengths: List[int]
-) -> Union[int, Literal[NEC_REPEAT], None]:
+) -> Union[int, Literal["__repeat__"], None]:
     """Decode NEC 脉冲序列至码值或标记，失败返回 None。"""
     if len(pulses) < 3:
         return None
@@ -219,25 +219,76 @@ def decode_protocol_gree(
     return value
 
 
+def extract_raw_bits(pulses: List[int], stats: Dict[str, int]) -> Optional[int]:
+    """从脉冲序列中提取原始47位数据，用于CONST_LENGTH模式。
+    
+    在CONST_LENGTH模式下，LIRC需要的是原始比特流，而不是协议解码值。
+    这个函数提取所有47位的原始数据。
+    """
+    if len(pulses) < 4:
+        return None
+    
+    # 检测帧头
+    hp, hs = pulses[0], pulses[1]
+    if not (stats["header_pulse"] * 0.8 <= hp <= stats["header_pulse"] * 1.2 and
+            stats["header_space"] * 0.8 <= hs <= stats["header_space"] * 1.2):
+        return None
+    
+    # 提取所有比特，不进行协议特定的解码
+    bits: List[int] = []
+    i = 2
+    gap_th = stats.get("gap", 6000)
+    bit_th = stats.get("bit_th", 400)
+    
+    while i + 1 < len(pulses) and len(bits) < 47:  # 最多47位
+        pulse, space = pulses[i], pulses[i+1]
+        
+        # 跳过帧间隙或过小的脉冲
+        if space > gap_th or pulse < 200:
+            i += 2
+            continue
+            
+        # 根据space长度判断0或1
+        bits.append(1 if space > bit_th else 0)
+        i += 2
+    
+    if len(bits) < 32:  # 至少需要32位数据
+        return None
+    
+    # 将比特流转换为整数（最多47位）
+    value = 0
+    for bit in bits[:47]:  # 只取前47位
+        value = (value << 1) | bit
+    
+    return value
+
+
 def build_conf_space_enc(
     code: int,
     name: str,
     cfg: Dict[str, int],
-    remote: str
+    remote: str,
+    raw_data: Optional[int] = None
 ) -> str:
     """生成 SPACE_ENC 格式的 LIRC 配置文本（CONST_LENGTH模式，适用于Gree等复杂协议）。
     
     重要发现：在CONST_LENGTH模式下，LIRC不进行协议解析，而是直接使用原始数据。
-    因此必须使用类似0x7FFFFFFFFFFF的原始数据格式，而不是解码后的值如0x13F。
+    因此必须使用从脉冲序列中提取的原始47位数据，而不是解码后的值如0x13F。
     这解释了为什么irrecord生成的配置能工作：它使用的是原始数据格式。
     """
     
     # 对于CONST_LENGTH模式，使用标准的帧间间隙（约50ms）
     gap_value = 53000  # 使用固定的53ms帧间间隙，与irrecord一致
     
-    # 关键：对于CONST_LENGTH模式，必须使用原始数据格式
-    # 不能使用协议解码值，LIRC在此模式下不进行脉冲解析
-    raw_code = "0x7FFFFFFFFFFF"  # 使用irrecord风格的原始数据
+    # 关键：对于CONST_LENGTH模式，优先使用从脉冲序列提取的原始数据
+    if raw_data is not None:
+        # 确保使用47位格式化（0x前缀 + 最多12个十六进制字符 = 47位）
+        raw_code = f"0x{raw_data:012X}"
+        logger.info(f"使用提取的原始47位数据: {raw_code}")
+    else:
+        # 备用：使用irrecord风格的默认原始数据
+        raw_code = "0x7FFFFFFFFFFF"
+        logger.warning("无法提取原始数据，使用默认值: 0x7FFFFFFFFFFF")
     
     lines = [
         "begin remote",
@@ -316,23 +367,32 @@ def main() -> None:
     # 生成 SPACE_ENC 格式配置
     try:
         cfg = auto_detect_params(frames)
-        # 优先尝试解码Gree空调协议
+        
+        # 提取原始47位数据，用于CONST_LENGTH模式
+        # 注意：使用完整的第一帧，而不是清理后的短帧
+        raw_data = extract_raw_bits(first_frame, cfg)
+        if raw_data is not None:
+            logger.info(f"成功提取原始47位数据: 0x{raw_data:012X}")
+        else:
+            logger.warning("无法提取原始47位数据，将使用默认值")
+        
+        # 为了保持兼容性，仍然进行协议解码（用于日志和调试）
         code = decode_protocol_gree(clean_frame, cfg)
         if code is not None:
-            logger.info(f"成功使用Gree协议解码按键值: 0x{code:X}")
+            logger.info(f"Gree协议解码参考值: 0x{code:X} (仅用于调试)")
         else:
             # 如果Gree解码失败，尝试NEC协议
             code = decode_protocol_nec(clean_frame, cfg, [32, 16, 24])
             if code is None:
-                logger.warning("Gree和NEC协议解码都失败，使用默认值 0x40BF")
-                code = 0x40BF
+                logger.info("协议解码失败，使用原始数据模式")
+                code = 0x40BF  # 仅用于调试
             elif code == NEC_REPEAT:
-                logger.warning("检测到重复帧，使用默认值 0x40BF") 
-                code = 0x40BF
+                logger.info("检测到重复帧，使用原始数据模式") 
+                code = 0x40BF  # 仅用于调试
             else:
-                logger.info(f"使用NEC协议解码按键值: 0x{code:X}")
+                logger.info(f"NEC协议解码参考值: 0x{code:X} (仅用于调试)")
         
-        content = build_conf_space_enc(code, args.key, cfg, args.name)
+        content = build_conf_space_enc(code, args.key, cfg, args.name, raw_data)
     except Exception as e:
         logger.error(f"SPACE_ENC 格式生成失败: {e}")
         parser.error("配置文件生成失败，请检查日志文件格式")
