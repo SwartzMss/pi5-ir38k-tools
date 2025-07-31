@@ -12,6 +12,12 @@
 - 红外发射管
 - 面包板、杜邦线
 
+示例设备图片：
+
+<img src="doc/device1.jpg" alt="Device" width="300" />
+
+<img src="doc/device2.jpg" alt="Device" width="300" />
+
 ### 1.1 接线示意
 
 | 组件     | 引脚           | 连接到 Pi 5         |
